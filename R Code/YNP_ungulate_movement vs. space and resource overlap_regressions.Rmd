@@ -1,0 +1,1039 @@
+---
+title: "Movement overlap versus space and resource overlap: linear regressions"
+author: "Molly Caldwell"
+date: "2023-03-19"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper")
+```
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+#load phenotype overlaps (weekly phenotypes, per indiv and season)
+HRsize_ol <- readRDS("./Code Output/density_overlap/bufferHRsize_weekly_density_overlap_indiv_3.20.2023.rds")
+elev_ol <- readRDS("./Code Output/density_overlap/elev_weekly_density_overlap_indiv_3.20.2023.rds")
+slope_ol <- readRDS("./Code Output/density_overlap/slope_weekly_density_overlap_indiv_3.20.2023.rds")
+treecov_ol <- readRDS("./Code Output/density_overlap/perctreecov_weekly_density_overlap_indiv_3.20.2023.rds")
+ms1_ol <- readRDS("./Code Output/density_overlap/ms1_weekly_density_overlap_indiv_3.20.2023.rds")
+ms2_ol <- readRDS("./Code Output/density_overlap/ms2_weekly_density_overlap_indiv_3.20.2023.rds")
+ms3_ol <- readRDS("./Code Output/density_overlap/ms3_weekly_density_overlap_indiv_3.20.2023.rds")
+
+HR_ol <- readRDS("./Code Output/seasonal_bufferHR_overlap_allindiv.rds")
+NDVI_ol <- readRDS("./Code Output/density_overlap/ndviVals_weekly_density_overlap_indiv_3.20.2023.rds")
+IRG_ol <- readRDS("./Code Output/density_overlap/irgVals_weekly_density_overlap_indiv_3.20.2023.rds")
+```
+
+
+```{r}
+#combine overlap data- have to combine twice, with ids switched because HR did both sides, prop ol only does it once
+ol_comb <- left_join(HR_ol, HRsize_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, HRsize_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(HRsize_prop_ol = HRsize_prop_ol.x) %>% 
+  mutate(HRsize_prop_ol = if_else(is.na(HRsize_prop_ol), HRsize_prop_ol.y, 
+                                  HRsize_prop_ol)) %>% 
+  select(-HRsize_prop_ol.y) %>% 
+  filter(!is.na(HRsize_prop_ol))
+
+#rest of joins
+ol_comb <- left_join(ol_comb, elev_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, elev_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(elev_prop_ol = elev_prop_ol.x) %>% 
+  mutate(elev_prop_ol = if_else(is.na(elev_prop_ol), elev_prop_ol.y, 
+                                  elev_prop_ol)) %>% 
+  select(-elev_prop_ol.y) %>% 
+  filter(!is.na(elev_prop_ol))
+
+ol_comb <- left_join(ol_comb, slope_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, slope_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(slope_prop_ol = slope_prop_ol.x) %>% 
+  mutate(slope_prop_ol = if_else(is.na(slope_prop_ol), slope_prop_ol.y, 
+                                  slope_prop_ol)) %>% 
+  select(-slope_prop_ol.y) %>% 
+  filter(!is.na(slope_prop_ol))
+
+ol_comb <- left_join(ol_comb, treecov_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, treecov_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(treecov_prop_ol = treecov_prop_ol.x) %>% 
+  mutate(treecov_prop_ol = if_else(is.na(treecov_prop_ol), treecov_prop_ol.y, 
+                                  treecov_prop_ol)) %>% 
+  select(-treecov_prop_ol.y) %>% 
+  filter(!is.na(treecov_prop_ol))
+
+ol_comb <- left_join(ol_comb, ms1_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, ms1_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(ms1_prop_ol = ms1_prop_ol.x) %>% 
+  mutate(ms1_prop_ol = if_else(is.na(ms1_prop_ol), ms1_prop_ol.y, 
+                                  ms1_prop_ol)) %>% 
+  select(-ms1_prop_ol.y) %>% 
+  filter(!is.na(ms1_prop_ol))
+
+ol_comb <- left_join(ol_comb, ms2_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, ms2_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(ms2_prop_ol = ms2_prop_ol.x) %>% 
+  mutate(ms2_prop_ol = if_else(is.na(ms2_prop_ol), ms2_prop_ol.y, 
+                                  ms2_prop_ol)) %>% 
+  select(-ms2_prop_ol.y) %>% 
+  filter(!is.na(ms2_prop_ol))
+
+ol_comb <- left_join(ol_comb, ms3_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, ms3_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(ms3_prop_ol = ms3_prop_ol.x) %>% 
+  mutate(ms3_prop_ol = if_else(is.na(ms3_prop_ol), ms3_prop_ol.y, 
+                                  ms3_prop_ol)) %>% 
+  select(-ms3_prop_ol.y) %>% 
+  filter(!is.na(ms3_prop_ol))
+
+ol_comb <- left_join(ol_comb, NDVI_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, NDVI_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(NDVIVals_prop_ol = NDVIVals_prop_ol.x) %>% 
+  mutate(NDVIVals_prop_ol = if_else(is.na(NDVIVals_prop_ol), NDVIVals_prop_ol.y, 
+                                  NDVIVals_prop_ol)) %>% 
+  select(-NDVIVals_prop_ol.y) %>% 
+  filter(!is.na(NDVIVals_prop_ol))
+
+
+
+ol_comb <- left_join(ol_comb, IRG_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, IRG_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(IRGVals_prop_ol = IRGVals_prop_ol.x) %>% 
+  mutate(IRGVals_prop_ol = if_else(is.na(IRGVals_prop_ol), IRGVals_prop_ol.y, 
+                                  IRGVals_prop_ol)) %>% 
+  select(-IRGVals_prop_ol.y) %>% 
+  filter(!is.na(IRGVals_prop_ol))
+
+#rename hr overlap
+ol_comb <- ol_comb %>% 
+  rename(HRol_seas = prop_overlap)
+```
+
+```{r}
+#save overlap data
+saveRDS(ol_comb, "./Code Output/density_overlap/density_overlap_model_data_comb_3.2023.rds")
+```
+
+
+#Bison models
+
+```{r}
+#filter overlap data to bison
+bison_ol <- ol_comb %>% 
+  filter(species == "bison")
+
+#order species2 with bison first for model
+bison_ol <- bison_ol %>% mutate(species2 = factor(species2, levels = c("bison",
+                                 "bighorn", "deer", "elk", "pronghorn")))
+
+#generate average overlap of space and resource use (HR, ndvi, irg ol) in data
+bison_ol <- bison_ol %>% 
+  rowwise() %>% 
+  mutate(HR_res_ol = mean(c(HRol_seas, NDVIVals_prop_ol, IRGVals_prop_ol)))
+```
+
+```{r}
+#home range overlap model
+bmod_HRol <- lm(HRol_seas ~ HRsize_prop_ol*species2 + elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = bison_ol)
+
+summary(bmod_HRol)
+```
+
+```{r}
+#graph home range model- per overlap metric
+##create overlap metric column to facet by
+bison_ol_g <- pivot_longer(bison_ol, cols = c(HRsize_prop_ol, elev_prop_ol, 
+                                              slope_prop_ol, treecov_prop_ol,
+                                              ms1_prop_ol, ms2_prop_ol,
+                                              ms3_prop_ol), 
+                           names_to = "ol_variable",
+                           values_to = "phen_prop_ol")
+
+#plot
+bp1 <- ggplot(bison_ol_g, aes(x = phen_prop_ol, y = HRol_seas, 
+                              color = species2)) + 
+   scale_color_manual(values = c("#E69F00", "#D55E00","#009E73","#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#ndvi overlap model
+bmod_NDVIol <- lm(NDVIVals_prop_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = bison_ol)
+
+summary(bmod_NDVIol)
+```
+
+```{r}
+#plot
+bp2 <- ggplot(bison_ol_g, aes(x = phen_prop_ol, y = NDVIVals_prop_ol, 
+                              color = species2)) + 
+   scale_color_manual(values = c("#E69F00", "#D55E00","#009E73","#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#IRG overlap model
+bmod_IRGol <- lm(IRGVals_prop_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = bison_ol)
+
+summary(bmod_IRGol)
+```
+
+```{r}
+#plot
+bp3 <- ggplot(bison_ol_g, aes(x = phen_prop_ol, y = IRGVals_prop_ol, 
+                              color = species2)) + 
+   scale_color_manual(values = c("#E69F00", "#D55E00","#009E73","#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#combined space/resource use (avg HR, ndvi, irg overlap)
+# model
+bmod_s_res <- lm(HR_res_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = bison_ol)
+
+summary(bmod_s_res)
+```
+
+```{r}
+#plot
+bp4 <- ggplot(bison_ol_g, aes(x = phen_prop_ol, y = HR_res_ol, 
+                              color = species2)) + 
+   scale_color_manual(values = c("#E69F00", "#D55E00","#009E73","#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+#bison niche models (resource use vs. hr overlap)
+
+```{r}
+#ndvi vs hr ol
+bmod_nh <- lm(NDVIVals_prop_ol ~ HRol_seas*species2 , data = bison_ol)
+
+summary(bmod_nh)
+
+#plot
+bnh <- ggplot(bison_ol, aes(x = HRol_seas, y = NDVIVals_prop_ol, 
+                              color = species2)) + 
+  scale_color_manual(values = c("#E69F00", "#D55E00","#009E73","#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm")
+```
+
+```{r}
+#irg vs hr ol
+bmod_ih <- lm(IRGVals_prop_ol ~ HRol_seas*species2 , data = bison_ol)
+
+summary(bmod_ih)
+
+#plot
+bih <- ggplot(bison_ol, aes(x = HRol_seas, y = IRGVals_prop_ol, 
+                              color = species2)) + 
+  
+  scale_color_manual(values = c("#E69F00", "#D55E00","#009E73","#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm")
+```
+
+#Elk models
+
+```{r}
+#filter overlap data to bison
+elk_ol <- ol_comb %>% 
+  filter(species == "elk")
+
+#order species2 with bison first for model
+elk_ol <- elk_ol %>% mutate(species2 = factor(species2, levels = c("elk", "bison",
+                                 "bighorn", "deer", "pronghorn")))
+
+#generate average overlap of space and resource use (HR, ndvi, irg ol) in data
+elk_ol <- elk_ol %>% 
+  rowwise() %>% 
+  mutate(HR_res_ol = mean(c(HRol_seas, NDVIVals_prop_ol, IRGVals_prop_ol)))
+```
+
+```{r}
+#home range overlap model
+emod_HRol <- lm(HRol_seas ~ HRsize_prop_ol*species2 + elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = elk_ol)
+
+summary(emod_HRol)
+```
+
+```{r}
+#graph home range model- per overlap metric
+##create overlap metric column to facet by
+elk_ol_g <- pivot_longer(elk_ol, cols = c(HRsize_prop_ol, elev_prop_ol, 
+                                              slope_prop_ol, treecov_prop_ol,
+                                              ms1_prop_ol, ms2_prop_ol,
+                                              ms3_prop_ol), 
+                           names_to = "ol_variable",
+                           values_to = "phen_prop_ol")
+
+#plot
+ep1 <- ggplot(elk_ol_g, aes(x = phen_prop_ol, y = HRol_seas, 
+                              color = species2)) + 
+  scale_color_manual(values = c("#0072B2", "#E69F00", "#D55E00", "#009E73", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#ndvi overlap model
+emod_NDVIol <- lm(NDVIVals_prop_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = elk_ol)
+
+summary(emod_NDVIol)
+```
+
+```{r}
+#plot
+ep2 <- ggplot(elk_ol_g, aes(x = phen_prop_ol, y = NDVIVals_prop_ol, 
+                              color = species2)) +
+  scale_color_manual(values = c("#0072B2", "#E69F00", "#D55E00", "#009E73", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#IRG overlap model
+emod_IRGol <- lm(IRGVals_prop_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = elk_ol)
+
+summary(emod_IRGol)
+```
+
+```{r}
+#plot
+ep3 <- ggplot(elk_ol_g, aes(x = phen_prop_ol, y = IRGVals_prop_ol, 
+                              color = species2)) + 
+   scale_color_manual(values = c("#E69F00", "#D55E00","#009E73","#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#combined space/resource use (avg HR, ndvi, irg overlap)
+# model
+emod_s_res <- lm(HR_res_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = elk_ol)
+
+summary(emod_s_res)
+```
+
+```{r}
+#plot
+ep4 <- ggplot(elk_ol_g, aes(x = phen_prop_ol, y = HR_res_ol, 
+                              color = species2)) + 
+  scale_color_manual(values = c("#0072B2", "#E69F00", "#D55E00", "#009E73", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+#Pronghorn models
+
+```{r}
+#filter overlap data to bison
+pronghorn_ol <- ol_comb %>% 
+  filter(species == "pronghorn")
+
+#order species2 with bison first for model
+pronghorn_ol <- pronghorn_ol %>% mutate(species2 = factor(species2, levels = c("pronghorn", "bison",
+                                 "bighorn", "deer", "elk")))
+
+#generate average overlap of space and resource use (HR, ndvi, irg ol) in data
+pronghorn_ol <- pronghorn_ol %>% 
+  rowwise() %>% 
+  mutate(HR_res_ol = mean(c(HRol_seas, NDVIVals_prop_ol, IRGVals_prop_ol)))
+```
+
+```{r}
+#home range overlap model
+pmod_HRol <- lm(HRol_seas ~ HRsize_prop_ol*species2 + elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = pronghorn_ol)
+
+summary(pmod_HRol)
+```
+
+```{r}
+#graph home range model- per overlap metric
+##create overlap metric column to facet by
+pronghorn_ol_g <- pivot_longer(pronghorn_ol, cols = c(HRsize_prop_ol, elev_prop_ol, 
+                                              slope_prop_ol, treecov_prop_ol,
+                                              ms1_prop_ol, ms2_prop_ol,
+                                              ms3_prop_ol), 
+                           names_to = "ol_variable",
+                           values_to = "phen_prop_ol")
+
+#plot
+pp1 <- ggplot(pronghorn_ol_g, aes(x = phen_prop_ol, y = HRol_seas, 
+                              color = species2)) + 
+  scale_color_manual(values = c("#CC79A7", "#E69F00", "#D55E00", "#009E73", "#0072B2")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#ndvi overlap model
+pmod_NDVIol <- lm(NDVIVals_prop_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = pronghorn_ol)
+
+summary(pmod_NDVIol)
+```
+
+```{r}
+#plot
+pp2 <- ggplot(pronghorn_ol_g, aes(x = phen_prop_ol, y = NDVIVals_prop_ol, 
+                              color = species2)) +
+  scale_color_manual(values =  c("#CC79A7", "#E69F00", "#D55E00", "#009E73", "#0072B2")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#IRG overlap model
+pmod_IRGol <- lm(IRGVals_prop_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = pronghorn_ol)
+
+summary(pmod_IRGol)
+```
+
+```{r}
+#plot
+pp3 <- ggplot(pronghorn_ol_g, aes(x = phen_prop_ol, y = IRGVals_prop_ol, 
+                              color = species2)) + 
+   scale_color_manual(values = c("#CC79A7", "#E69F00", "#D55E00", "#009E73", "#0072B2")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#combined space/resource use (avg HR, ndvi, irg overlap)
+# model
+pmod_s_res <- lm(HR_res_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = pronghorn_ol)
+
+summary(pmod_s_res)
+```
+
+```{r}
+#plot
+pp4 <- ggplot(pronghorn_ol_g, aes(x = phen_prop_ol, y = HR_res_ol, 
+                              color = species2)) + 
+  scale_color_manual(values = c("#CC79A7", "#E69F00", "#D55E00", "#009E73", "#0072B2")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+
+#bighorn models
+
+```{r}
+#filter overlap data to bison
+bighorn_ol <- ol_comb %>% 
+  filter(species == "bighorn")
+
+#order species2 with bison first for model
+bighorn_ol <- bighorn_ol %>% mutate(species2 = factor(species2, levels = c("bighorn", "bison",
+                              "deer", "elk", "pronghorn")))
+
+#generate average overlap of space and resource use (HR, ndvi, irg ol) in data
+bighorn_ol <- bighorn_ol %>% 
+  rowwise() %>% 
+  mutate(HR_res_ol = mean(c(HRol_seas, NDVIVals_prop_ol, IRGVals_prop_ol)))
+```
+
+```{r}
+#home range overlap model
+bhmod_HRol <- lm(HRol_seas ~ HRsize_prop_ol*species2 + elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = bighorn_ol)
+
+summary(bhmod_HRol)
+```
+
+```{r}
+#graph home range model- per overlap metric
+##create overlap metric column to facet by
+bighorn_ol_g <- pivot_longer(bighorn_ol, cols = c(HRsize_prop_ol, elev_prop_ol, 
+                                              slope_prop_ol, treecov_prop_ol,
+                                              ms1_prop_ol, ms2_prop_ol,
+                                              ms3_prop_ol), 
+                           names_to = "ol_variable",
+                           values_to = "phen_prop_ol")
+
+#plot
+bhp1 <- ggplot(bighorn_ol_g, aes(x = phen_prop_ol, y = HRol_seas, 
+                              color = species2)) + 
+  scale_color_manual(values = c("#D55E00", "#E69F00", "#009E73", "#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#ndvi overlap model
+bhmod_NDVIol <- lm(NDVIVals_prop_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = bighorn_ol)
+
+summary(bhmod_NDVIol)
+```
+
+```{r}
+#plot
+bhp2 <- ggplot(bighorn_ol_g, aes(x = phen_prop_ol, y = NDVIVals_prop_ol, 
+                              color = species2)) +
+  scale_color_manual(values =  c("#D55E00", "#E69F00", "#009E73", "#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#IRG overlap model
+bhmod_IRGol <- lm(IRGVals_prop_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = bighorn_ol)
+
+summary(bhmod_IRGol)
+```
+
+```{r}
+#plot
+bhp3 <- ggplot(bighorn_ol_g, aes(x = phen_prop_ol, y = IRGVals_prop_ol, 
+                              color = species2)) + 
+   scale_color_manual(values = c("#D55E00", "#E69F00", "#009E73", "#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#combined space/resource use (avg HR, ndvi, irg overlap)
+# model
+bhmod_s_res <- lm(HR_res_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = bighorn_ol)
+
+summary(bhmod_s_res)
+```
+
+```{r}
+#plot
+bhp4 <- ggplot(bighorn_ol_g, aes(x = phen_prop_ol, y = HR_res_ol, 
+                              color = species2)) + 
+  scale_color_manual(values = c("#D55E00", "#E69F00", "#009E73", "#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+
+#deer models
+
+```{r}
+#filter overlap data to bison
+deer_ol <- ol_comb %>% 
+  filter(species == "deer")
+
+#order species2 with bison first for model
+deer_ol <- deer_ol %>% mutate(species2 = factor(species2, levels = c("deer", "bison",
+                              "bighorn", "elk", "pronghorn")))
+
+#generate average overlap of space and resource use (HR, ndvi, irg ol) in data
+deer_ol <- deer_ol %>% 
+  rowwise() %>% 
+  mutate(HR_res_ol = mean(c(HRol_seas, NDVIVals_prop_ol, IRGVals_prop_ol)))
+```
+
+```{r}
+#home range overlap model
+dmod_HRol <- lm(HRol_seas ~ HRsize_prop_ol*species2 + elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = deer_ol)
+
+summary(dmod_HRol)
+```
+
+```{r}
+#graph home range model- per overlap metric
+##create overlap metric column to facet by
+deer_ol_g <- pivot_longer(deer_ol, cols = c(HRsize_prop_ol, elev_prop_ol, 
+                                              slope_prop_ol, treecov_prop_ol,
+                                              ms1_prop_ol, ms2_prop_ol,
+                                              ms3_prop_ol), 
+                           names_to = "ol_variable",
+                           values_to = "phen_prop_ol")
+
+#plot
+dp1 <- ggplot(deer_ol_g, aes(x = phen_prop_ol, y = HRol_seas, 
+                              color = species2)) + 
+  scale_color_manual(values = c("#009E73", "#E69F00", "#D55E00", "#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#ndvi overlap model
+dmod_NDVIol <- lm(NDVIVals_prop_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = deer_ol)
+
+summary(dmod_NDVIol)
+```
+
+```{r}
+#plot
+dp2 <- ggplot(deer_ol_g, aes(x = phen_prop_ol, y = NDVIVals_prop_ol, 
+                              color = species2)) +
+  scale_color_manual(values =  c("#009E73", "#E69F00", "#D55E00", "#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#IRG overlap model
+dmod_IRGol <- lm(IRGVals_prop_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = deer_ol)
+
+summary(dmod_IRGol)
+```
+
+```{r}
+#plot
+dp3 <- ggplot(deer_ol_g, aes(x = phen_prop_ol, y = IRGVals_prop_ol, 
+                              color = species2)) + 
+   scale_color_manual(values = c("#009E73", "#E69F00", "#D55E00", "#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+```{r}
+#combined space/resource use (avg HR, ndvi, irg overlap)
+# model
+dmod_s_res <- lm(HR_res_ol ~ HRsize_prop_ol*species2 + 
+                    elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2, data = deer_ol)
+
+summary(dmod_s_res)
+```
+
+```{r}
+#plot
+dp4 <- ggplot(deer_ol_g, aes(x = phen_prop_ol, y = HR_res_ol, 
+                              color = species2)) + 
+  scale_color_manual(values = c("#009E73", "#E69F00", "#D55E00", "#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm") +
+  facet_wrap(~ol_variable)
+```
+
+#WY-TWS 2023 presentation plots
+Combined HR, NDVI, IRG overlap vs. home range size, elevation, slope, treecover, and ms2 overlap
+
+```{r}
+library(ggh4x) #for faceting specifications
+```
+
+##Bison
+
+```{r}
+##create overlap metric column to facet by and clean up names
+bison_ol_p <- pivot_longer(bison_ol, cols = c(HRsize_prop_ol, elev_prop_ol, 
+                                              slope_prop_ol, treecov_prop_ol, 
+                                              ms2_prop_ol), 
+                           names_to = "ol_variable",
+                           values_to = "phen_prop_ol") %>% 
+  mutate(ol_variable = case_when(ol_variable == "HRsize_prop_ol" ~ "Home range size",
+                                 ol_variable == "elev_prop_ol" ~ "Elevation",
+                                 ol_variable == "slope_prop_ol" ~ "Slope",
+                                 ol_variable == "treecov_prop_ol" ~ "Tree cover",
+                                 ol_variable == "ms2_prop_ol" ~ "Foraging behavior")) %>% 
+  mutate(ol_variable = factor(ol_variable, levels = c("Home range size", "Elevation", 
+                                              "Slope", "Tree cover", "Foraging behavior"))) %>% 
+  mutate(spp_pair = case_when(species2 == "bison" ~ "bison-bison",
+                              species2 == "bighorn" ~ "bison-bighorn",
+                              species2 == "deer" ~ "bison-deer",
+                              species2 == "elk" ~ "bison-elk",
+                              species2 == "pronghorn" ~ "bison-pronghorn")) %>% 
+  mutate(spp_pair = factor(spp_pair, levels = c("bison-bison", "bison-bighorn",
+                                                "bison-deer", "bison-elk",
+                                                "bison-pronghorn"))) %>% 
+  mutate(same_spp = factor(if_else(species == species2, 1, 0), levels = c(1, 0)))
+
+#Bison and other species
+bp_p <- ggplot(bison_ol_p, aes(x = phen_prop_ol, y = HR_res_ol, 
+                              color = spp_pair)) + 
+   scale_color_manual(values = c("#E69F00", "#D55E00","#009E73","#0072B2", "#CC79A7")) +
+  stat_smooth(method = "lm", linewidth = 1.5, aes(linetype = same_spp)) +
+  scale_linetype(guide = "none") +
+  facet_wrap2(~ol_variable, axes = "x") +
+  xlab("Movement similarity") +
+  ylab("Space & resource use similarity") +
+  theme_bw() +
+  theme(legend.title = element_blank(), 
+        legend.text = element_text(size=14),
+        axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        strip.text = element_text(size = 14, face = "bold"),
+        panel.spacing = unit(1, "lines"), 
+        legend.spacing.y = unit(0.5, 'cm')) +
+  guides(color = guide_legend(byrow = TRUE))
+
+#just bison
+bp_ps <- ggplot(bison_ol_p %>% filter(same_spp == 1), aes(x = phen_prop_ol, y = HR_res_ol)) + 
+  stat_smooth(method = "lm", linewidth = 1.5, color = "#E69F00") +
+  facet_wrap2(~ol_variable, axes = "x") +
+  xlab("Movement similarity") +
+  ylab("Space & resource use similarity") +
+  theme_bw() +
+  theme(legend.title = element_blank(), 
+        legend.text = element_text(size=14),
+        axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        strip.text = element_text(size = 14, face = "bold"),
+        panel.spacing = unit(1, "lines"))
+
+```
+
+##Elk
+
+```{r}
+##create overlap metric column to facet by and clean up names
+elk_ol_p <- pivot_longer(elk_ol, cols = c(HRsize_prop_ol, elev_prop_ol, 
+                                              slope_prop_ol, treecov_prop_ol, 
+                                              ms2_prop_ol), 
+                           names_to = "ol_variable",
+                           values_to = "phen_prop_ol") %>% 
+  mutate(ol_variable = case_when(ol_variable == "HRsize_prop_ol" ~ "Home range size",
+                                 ol_variable == "elev_prop_ol" ~ "Elevation",
+                                 ol_variable == "slope_prop_ol" ~ "Slope",
+                                 ol_variable == "treecov_prop_ol" ~ "Tree cover",
+                                 ol_variable == "ms2_prop_ol" ~ "Foraging behavior")) %>% 
+  mutate(ol_variable = factor(ol_variable, levels = c("Home range size", "Elevation", 
+                                              "Slope", "Tree cover", "Foraging behavior"))) %>% 
+  mutate(spp_pair = case_when(species2 == "elk" ~ "elk-elk",
+                              species2 == "bighorn" ~ "elk-bighorn",
+                              species2 == "deer" ~ "elk-deer",
+                              species2 == "bison" ~ "elk-bison",
+                              species2 == "pronghorn" ~ "elk-pronghorn")) %>% 
+  mutate(spp_pair = factor(spp_pair, levels = c("elk-elk", "elk-bison", "elk-bighorn", 
+                                                "elk-deer", 
+                                                "elk-pronghorn"))) %>% 
+  mutate(same_spp = factor(if_else(species == species2, 1, 0), levels = c(1, 0)))
+
+#elk and other species
+ep_p <- ggplot(elk_ol_p, aes(x = phen_prop_ol, y = HR_res_ol, 
+                              color = spp_pair)) + 
+   scale_color_manual(values = c("#0072B2", "#E69F00", "#D55E00","#009E73", "#CC79A7")) +
+  stat_smooth(method = "lm", linewidth = 1.5, aes(linetype = same_spp)) +
+  scale_linetype(guide = "none") +
+  facet_wrap2(~ol_variable, axes = "x") +
+  xlab("Movement similarity") +
+  ylab("Space & resource use similarity") +
+  theme_bw() +
+  theme(legend.title = element_blank(), 
+        legend.text = element_text(size=14),
+        axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        strip.text = element_text(size = 14, face = "bold"),
+        panel.spacing = unit(1, "lines"), 
+        legend.spacing.y = unit(0.5, 'cm')) +
+  guides(color = guide_legend(byrow = TRUE))
+
+#just elk
+ep_ps <- ggplot(elk_ol_p %>% filter(same_spp == 1), aes(x = phen_prop_ol, y = HR_res_ol)) + 
+  stat_smooth(method = "lm", linewidth = 1.5, color = "#0072B2") +
+  facet_wrap2(~ol_variable, axes = "x") +
+  xlab("Movement similarity") +
+  ylab("Space & resource use similarity") +
+  theme_bw() +
+  theme(legend.title = element_blank(), 
+        legend.text = element_text(size=14),
+        axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        strip.text = element_text(size = 14, face = "bold"),
+        panel.spacing = unit(1, "lines"))
+
+```
+
+##Pronghorn
+
+```{r}
+##create overlap metric column to facet by and clean up names
+pronghorn_ol_p <- pivot_longer(pronghorn_ol, cols = c(HRsize_prop_ol, elev_prop_ol, 
+                                              slope_prop_ol, treecov_prop_ol, 
+                                              ms2_prop_ol), 
+                           names_to = "ol_variable",
+                           values_to = "phen_prop_ol") %>% 
+  mutate(ol_variable = case_when(ol_variable == "HRsize_prop_ol" ~ "Home range size",
+                                 ol_variable == "elev_prop_ol" ~ "Elevation",
+                                 ol_variable == "slope_prop_ol" ~ "Slope",
+                                 ol_variable == "treecov_prop_ol" ~ "Tree cover",
+                                 ol_variable == "ms2_prop_ol" ~ "Foraging behavior")) %>% 
+  mutate(ol_variable = factor(ol_variable, levels = c("Home range size", "Elevation", 
+                                              "Slope", "Tree cover", "Foraging behavior"))) %>% 
+  mutate(spp_pair = case_when(species2 == "pronghorn" ~ "pronghorn-pronghorn",
+                              species2 == "bighorn" ~ "pronghorn-bighorn",
+                              species2 == "deer" ~ "pronghorn-deer",
+                              species2 == "bison" ~ "pronghorn-bison",
+                              species2 == "elk" ~ "pronghorn-elk")) %>% 
+  mutate(spp_pair = factor(spp_pair, levels = c("pronghorn-pronghorn", "pronghorn-bison", "pronghorn-bighorn", 
+                                                "pronghorn-deer", 
+                                                "pronghorn-elk"))) %>% 
+  mutate(same_spp = factor(if_else(species == species2, 1, 0), levels = c(1, 0)))
+
+#pronghorn and other species
+pp_p <- ggplot(pronghorn_ol_p, aes(x = phen_prop_ol, y = HR_res_ol, 
+                              color = spp_pair)) + 
+   scale_color_manual(values = c("#CC79A7", "#E69F00", "#D55E00","#009E73", "#0072B2")) +
+  stat_smooth(method = "lm", linewidth = 1.5, aes(linetype = same_spp)) +
+  scale_linetype(guide = "none") +
+  facet_wrap2(~ol_variable, axes = "x") +
+  xlab("Movement similarity") +
+  ylab("Space & resource use similarity") +
+  theme_bw() +
+  theme(legend.title = element_blank(), 
+        legend.text = element_text(size=14),
+        axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        strip.text = element_text(size = 14, face = "bold"),
+        panel.spacing = unit(1, "lines"), 
+        legend.spacing.y = unit(0.5, 'cm')) +
+  guides(color = guide_legend(byrow = TRUE))
+
+#just pronghorn
+pp_ps <- ggplot(pronghorn_ol_p %>% filter(same_spp == 1), aes(x = phen_prop_ol, y = HR_res_ol)) + 
+  stat_smooth(method = "lm", linewidth = 1.5, color = "#CC79A7") +
+  facet_wrap2(~ol_variable, axes = "x") +
+  xlab("Movement similarity") +
+  ylab("Space & resource use similarity") +
+  theme_bw() +
+  theme(legend.title = element_blank(), 
+        legend.text = element_text(size=14),
+        axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        strip.text = element_text(size = 14, face = "bold"),
+        panel.spacing = unit(1, "lines"))
+
+```
+
+
+##Deer
+
+```{r}
+##create overlap metric column to facet by and clean up names
+deer_ol_p <- pivot_longer(deer_ol, cols = c(HRsize_prop_ol, elev_prop_ol, 
+                                              slope_prop_ol, treecov_prop_ol, 
+                                              ms2_prop_ol), 
+                           names_to = "ol_variable",
+                           values_to = "phen_prop_ol") %>% 
+  mutate(ol_variable = case_when(ol_variable == "HRsize_prop_ol" ~ "Home range size",
+                                 ol_variable == "elev_prop_ol" ~ "Elevation",
+                                 ol_variable == "slope_prop_ol" ~ "Slope",
+                                 ol_variable == "treecov_prop_ol" ~ "Tree cover",
+                                 ol_variable == "ms2_prop_ol" ~ "Foraging behavior")) %>% 
+  mutate(ol_variable = factor(ol_variable, levels = c("Home range size", "Elevation", 
+                                              "Slope", "Tree cover", "Foraging behavior"))) %>% 
+  mutate(sdp_pair = case_when(species2 == "deer" ~ "deer-deer",
+                              species2 == "bighorn" ~ "deer-bighorn",
+                              species2 == "pronghorn" ~ "deer-pronghorn",
+                              species2 == "bison" ~ "deer-bison",
+                              species2 == "elk" ~ "deer-elk")) %>% 
+  mutate(sdp_pair = factor(sdp_pair, levels = c("deer-deer", "deer-bison", "deer-bighorn", "deer-elk", "deer-pronghorn"))) %>% 
+  mutate(same_sdp = factor(if_else(species == species2, 1, 0), levels = c(1, 0)))
+
+#deer and other species
+dp_p <- ggplot(deer_ol_p, aes(x = phen_prop_ol, y = HR_res_ol, 
+                              color = sdp_pair)) + 
+   scale_color_manual(values = c("#009E73", "#E69F00", "#D55E00", "#0072B2",
+                                          "#CC79A7")) +
+  stat_smooth(method = "lm", linewidth = 1.5, aes(linetype = same_sdp)) +
+  scale_linetype(guide = "none") +
+  facet_wrap2(~ol_variable, axes = "x") +
+  xlab("Movement similarity") +
+  ylab("Space & resource use similarity") +
+  theme_bw() +
+  theme(legend.title = element_blank(), 
+        legend.text = element_text(size=14),
+        axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        strip.text = element_text(size = 14, face = "bold"),
+        panel.spacing = unit(1, "lines"), 
+        legend.spacing.y = unit(0.5, 'cm')) +
+  guides(color = guide_legend(byrow = TRUE))
+
+#just deer
+dp_ps <- ggplot(deer_ol_p %>% filter(same_sdp == 1), aes(x = phen_prop_ol, y = HR_res_ol)) + 
+  stat_smooth(method = "lm", linewidth = 1.5, color = "#009E73") +
+  facet_wrap2(~ol_variable, axes = "x") +
+  xlab("Movement similarity") +
+  ylab("Space & resource use similarity") +
+  theme_bw() +
+  theme(legend.title = element_blank(), 
+        legend.text = element_text(size=14),
+        axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        strip.text = element_text(size = 14, face = "bold"),
+        panel.spacing = unit(1, "lines"))
+
+```
+
+##Bighorn
+
+```{r}
+##create overlap metric column to facet by and clean up names
+bighorn_ol_p <- pivot_longer(bighorn_ol, cols = c(HRsize_prop_ol, elev_prop_ol, 
+                                              slope_prop_ol, treecov_prop_ol, 
+                                              ms2_prop_ol), 
+                           names_to = "ol_variable",
+                           values_to = "phen_prop_ol") %>% 
+  mutate(ol_variable = case_when(ol_variable == "HRsize_prop_ol" ~ "Home range size",
+                                 ol_variable == "elev_prop_ol" ~ "Elevation",
+                                 ol_variable == "slope_prop_ol" ~ "Slope",
+                                 ol_variable == "treecov_prop_ol" ~ "Tree cover",
+                                 ol_variable == "ms2_prop_ol" ~ "Foraging behavior")) %>% 
+  mutate(ol_variable = factor(ol_variable, levels = c("Home range size", "Elevation", 
+                                              "Slope", "Tree cover", "Foraging behavior"))) %>% 
+  mutate(sbp_pair = case_when(species2 == "bighorn" ~ "bighorn-bighorn",
+                              species2 == "deer" ~ "bighorn-deer",
+                              species2 == "pronghorn" ~ "bighorn-pronghorn",
+                              species2 == "bison" ~ "bighorn-bison",
+                              species2 == "elk" ~ "bighorn-elk")) %>% 
+  mutate(sbp_pair = factor(sbp_pair, levels = c("bighorn-bighorn", "bighorn-bison", "bighorn-deer", "bighorn-elk", "bighorn-pronghorn"))) %>% 
+  mutate(same_sbp = factor(if_else(species == species2, 1, 0), levels = c(1, 0)))
+
+#bighorn and other species
+bp_p <- ggplot(bighorn_ol_p, aes(x = phen_prop_ol, y = HR_res_ol, 
+                              color = sbp_pair)) + 
+   scale_color_manual(values = c("#D55E00", "#E69F00", "#009E73", "#0072B2",
+                                          "#CC79A7")) +
+  stat_smooth(method = "lm", linewidth = 1.5, aes(linetype = same_sbp)) +
+  scale_linetype(guide = "none") +
+  facet_wrap2(~ol_variable, axes = "x") +
+  xlab("Movement similarity") +
+  ylab("Space & resource use similarity") +
+  theme_bw() +
+  theme(legend.title = element_blank(), 
+        legend.text = element_text(size=14),
+        axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        strip.text = element_text(size = 14, face = "bold"),
+        panel.spacing = unit(1, "lines"), 
+        legend.spacing.y = unit(0.5, 'cm')) +
+  guides(color = guide_legend(byrow = TRUE))
+
+#just bighorn
+bp_ps <- ggplot(bighorn_ol_p %>% filter(same_sbp == 1), aes(x = phen_prop_ol, y = HR_res_ol)) + 
+  stat_smooth(method = "lm", linewidth = 1.5, color = "#D55E00") +
+  facet_wrap2(~ol_variable, axes = "x") +
+  xlab("Movement similarity") +
+  ylab("Space & resource use similarity") +
+  theme_bw() +
+  theme(legend.title = element_blank(), 
+        legend.text = element_text(size=14),
+        axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        strip.text = element_text(size = 14, face = "bold"),
+        panel.spacing = unit(1, "lines"))
+
+```

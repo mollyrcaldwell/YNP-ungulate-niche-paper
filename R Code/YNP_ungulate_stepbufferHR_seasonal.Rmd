@@ -1,0 +1,220 @@
+---
+title: "YNP Ungulates Step Buffer Home Range:season, month, week"
+author: "Molly Caldwell"
+date: "3/3/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper")
+```
+
+```{r}
+library(tidyverse)
+library(sf)
+# library(devtools) #use to update jerod's MoveTools package
+# install_github("jmerkle1/MerkleLab-Code-Repository", subdir="MoveTools", force = TRUE)
+library(MoveTools)
+```
+
+#Load data
+With movement parameters calculated
+
+```{r}
+data <- readRDS("./Data/allspp_cleanedGPSdata_seasonal_moveparams_3.2022.rds")
+```
+
+#Buffer home ranges- seasonal
+By each step
+see this paper who have done this:
+https://esajournals.onlinelibrary.wiley.com/doi/full/10.1890/11-1610.1
+
+```{r}
+# calculate buffers based on a quantiles of step lengths (per species)
+buffs <- data %>%
+  st_drop_geometry() %>%
+  group_by(species, id_yr_seas) %>%
+  summarize(dist_quant50=quantile(dist, probs = 0.50, na.rm=TRUE),
+            dist_quant95=quantile(dist, probs = 0.95, na.rm=TRUE)) %>%
+  dplyr::select(-c(id_yr_seas)) %>%
+  ungroup() %>% 
+  group_by(species) %>% 
+  summarize(across(starts_with("dist"), ~ mean(.x, na.rm = TRUE)), .groups = "keep")
+
+
+# now create a lines from steps, where each row is its own connected step
+lns <- Points2Lines(data=data,
+                    date_name="date",
+                    id_name="id_yr_seas",
+                    byid=FALSE,  # put FALSE here so it does one line per step
+                    no_cores=detectCores()-1)  
+
+head(lns)
+nrow(data)
+nrow(lns)
+
+# now, must remove steps with relatively large gaps between them (e.g., > 8 hrs)
+# I am just going to use my burst column for this, which I specified as less than 5 hours
+table(data$StepFlag)
+
+lns <- lns %>%
+  filter(StepFlag == TRUE)
+
+save.image("./stepbuffer_progress.RData")
+load("./stepbuffer_progress.RData")
+
+
+#need to change this to loop by species through the buffs values
+# now buffer the lines by the differt buff values and
+# create a sf database with all the home ranges for each id and the 50 quantile buffer
+spp <- unique(buffs$species)
+
+linebuffs <- do.call(rbind, lapply(1:length(spp), function(i){
+  toreturn <- lns %>%
+    filter(species == spp[i]) %>% 
+    st_buffer(dist = buffs[which(buffs$species==spp[i]),]$dist_quant50) %>%   # buffer each step
+    group_by(id_yr_seas, yr, season, cid) %>%
+    summarise(do_union = TRUE)  # st_union each steps' buffered line into a single polygon
+  toreturn$buffer_dist <- buffs[which(buffs$species==spp[i]),]$dist_quant50
+  toreturn$species <- spp[i]
+  return(toreturn)
+}))
+
+head(linebuffs)
+tail(linebuffs)
+table(linebuffs$id_yr_seas)
+table(linebuffs$buffer_dist)
+
+# now add the sizes
+linebuffs$HR_size_km2 <- as.numeric(st_area(linebuffs))/1000000
+hist(linebuffs$HR_size_km2)
+
+#-----------------------------#
+# visualize your line buff ####
+#-----------------------------#
+whichID <- sample(unique(data$id_yr_seas), 1)    #choose an ID to look at
+
+temp <- data %>%
+  filter(id_yr_seas==whichID) %>%
+  dplyr::select(id_yr_seas, geometry)
+
+# now to plot
+plot(linebuffs[linebuffs$id_yr_seas == whichID,"buffer_dist"],
+     col=alpha(1:3, alpha=.2), border=1:3)
+points(st_coordinates(temp), col=alpha('black',alpha=.8), pch=".")
+
+mapview(linebuffs[linebuffs$id_yr_seas == whichID,], zcol="buffer_dist") +
+  mapview(temp)
+
+rm(whichID)
+```
+
+```{r}
+#save linebuffs
+saveRDS(linebuffs, "./Code Output/linebuff_HRs_season_50quant_allspp.rds")
+```
+
+#Monthly
+
+```{r}
+#add month to lns, flag and remove months per id with < 20 days (<240 points)
+lns_mo <- lns %>% 
+  mutate(month = month(date)) %>% 
+  group_by(cid, yr, month) %>% 
+  mutate(npt_mo = n()) %>% 
+  ungroup() %>% 
+  filter(npt_mo >= 240)
+
+# create a sf database with all the home ranges for each id and the 50 quantile buffer
+spp <- unique(buffs$species)
+
+#enable JIT compiler
+enableJIT(3)
+
+#start parallel processing
+  no_cores <- detectCores()-1
+  clust <- makeCluster(no_cores) 
+  parallel::clusterExport(clust, envir=environment(),
+                varlist=c("spp", "buffs", "lns_mo"))
+
+linebuffs_month <- do.call(rbind, lapply(1:length(spp), function(i){
+  print(paste0("i: ", i))
+  toreturn <- lns_mo %>%
+    filter(species == spp[i]) %>% 
+    st_buffer(dist = buffs[which(buffs$species==spp[i]),]$dist_quant50) %>%   # buffer each step
+    group_by(cid, yr, month) %>%
+    summarise(do_union = TRUE)  # st_union each steps' buffered line into a single polygon
+  toreturn$buffer_dist <- buffs[which(buffs$species==spp[i]),]$dist_quant50
+  toreturn$species <- spp[i]
+  return(toreturn)
+}))
+
+#end parallel processing
+stopCluster(clust)
+ 
+#disable compiler
+enableJIT(0)
+
+head(linebuffs_month)
+tail(linebuffs_month)
+
+# now add the sizes
+linebuffs_month$HR_size_km2 <- as.numeric(st_area(linebuffs_month))/1000000
+hist(linebuffs_month$HR_size_km2)
+
+saveRDS(linebuffs_month, "./Code Output/linebuff_HRs_month_50quant_allspp.rds")
+```
+
+#Weekly
+
+```{r}
+#add month to lns, flag and remove months per id with < 4 days (<48 points)
+lns_wk<- lns %>% 
+  mutate(week = week(date)) %>% 
+  group_by(cid, yr, week) %>% 
+  mutate(npt_wk = n()) %>% 
+  ungroup() %>% 
+  filter(npt_wk >= 48)
+
+# create a sf database with all the home ranges for each id and the 50 quantile buffer
+spp <- unique(buffs$species)
+
+#enable JIT compiler
+enableJIT(3)
+
+#start parallel processing
+  no_cores <- detectCores()-1
+  clust <- makeCluster(no_cores) 
+  parallel::clusterExport(clust, envir=environment(),
+                varlist=c("spp", "buffs", "lns_wk"))
+
+linebuffs_week <- do.call(rbind, lapply(1:length(spp), function(i){
+  print(paste0("i: ", i))
+  toreturn <- lns_wk %>%
+    filter(species == spp[i]) %>% 
+    st_buffer(dist = buffs[which(buffs$species==spp[i]),]$dist_quant50) %>%   # buffer each step
+    group_by(cid, yr, week) %>%
+    summarise(do_union = TRUE)  # st_union each steps' buffered line into a single polygon
+  toreturn$buffer_dist <- buffs[which(buffs$species==spp[i]),]$dist_quant50
+  toreturn$species <- spp[i]
+  return(toreturn)
+}))
+
+#end parallel processing
+stopCluster(clust)
+ 
+#disable compiler
+enableJIT(0)
+
+head(linebuffs_week)
+
+# now add the sizes
+linebuffs_week$HR_size_km2 <- as.numeric(st_area(linebuffs_week))/1000000
+hist(linebuffs_week$HR_size_km2)
+
+saveRDS(linebuffs_week, "./Code Output/linebuff_HRs_week_50quant_allspp.rds")
+```
+
+
+

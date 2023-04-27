@@ -1,0 +1,92 @@
+---
+title: "YNP Ungulates Fidelity: weekly buffer HR"
+author: "Molly Caldwell"
+date: "3/19/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper")
+```
+
+```{r}
+library(tidyverse)
+library(sf)
+```
+
+#Load data
+Weekly buffer HR (50th quant) per individual
+
+```{r}
+linebuffs_week <- readRDS("./Code Output/linebuff_HRs_week_50quant_allspp.rds")
+```
+
+#Fidelity to prior month (prior 4 weeks)
+Proportion overlap of weekly HR with prior 4 weeks per individual
+
+```{r}
+#enable JIT compiler
+enableJIT(3)
+
+#start parallel processing
+  no_cores <- detectCores()-1
+  clust <- makeCluster(no_cores) 
+  parallel::clusterExport(clust, envir=environment(),
+                varlist=c("linebuffs_week"))
+
+# now calculate, for each id, how much of its HR overlaps with each other id
+overlaps <- do.call(rbind, lapply(1:nrow(linebuffs), function(i){
+  
+  
+  tmp <- st_intersection(linebuffs[i,"geometry"], linebuffs)
+
+  # calculate the proportion overlap
+  tmp$prop_overlap <- as.numeric(st_area(tmp)/st_area(linebuffs[i,]))
+
+  # # check
+  # hist(tmp$prop_overlap)
+  # sort(tmp$prop_overlap)  # there should be a 1 in here
+  # now, if there is no overlap at all, there isn't a value in tmp
+
+  tmp <- tmp %>%
+    st_drop_geometry() %>%
+    dplyr::select(id_yr_seas, prop_overlap, species, season, yr, cid)
+
+  # now merge with original values
+  tmp <- linebuffs %>%
+    st_drop_geometry() %>%
+    dplyr::select(id_yr_seas, species, season, yr, cid) %>%
+    full_join(tmp)
+
+  tmp <- tmp %>%
+    mutate(prop_overlap=replace_na(prop_overlap, 0))
+
+  # remove itself
+  tmp <- tmp %>%
+    filter(id_yr_seas != linebuffs$id_yr_seas[i])
+
+  # rename the comparing id_yr_sea
+  tmp <- tmp %>%
+    rename(id_yr_seas2 = id_yr_seas,
+           species2 = species,
+           season2 = season,
+           yr2 = yr,
+           cid2 = cid)
+  
+  return(data.frame(id_yr_seas = linebuffs$id_yr_seas[i], species = linebuffs$species[i],
+                    season = linebuffs$season[i], yr = linebuffs$yr[i],
+                    cid = linebuffs$cid[i], tmp))
+}))
+
+ #save overlaps
+saveRDS(overlaps, "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper/Code Output/seasonal_bufferHR_overlap_allindiv.rds")
+
+#end parallel processing
+stopCluster(clust)
+ 
+#disable compiler
+enableJIT(0)
+
+```
+

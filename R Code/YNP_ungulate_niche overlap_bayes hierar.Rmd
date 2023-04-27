@@ -1,0 +1,176 @@
+---
+title: "Movement overlap versus space and resource overlap: linear regressions"
+author: "Molly Caldwell"
+date: "2023-03-19"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper")
+```
+
+```{r}
+#load libraries
+library(tidyverse)
+library(brms)
+library(coda)
+
+library(rstanarm)
+```
+
+```{r}
+#load overlap data 
+ol_comb <- readRDS("C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper/Code Output/density_overlap/density_overlap_model_data_comb_3.2023.rds")
+
+#add average of seasonal HR and NDVI and IRG overlap
+ol_comb <- ol_comb %>% 
+  rowwise() %>% 
+  mutate(HR_res_ol = mean(c(HRol_seas, NDVIVals_prop_ol, IRGVals_prop_ol)))
+
+#sample part of ol_comb
+ol_comb_s <- ol_comb[sample(1:nrow(ol_comb), 5000),]
+```
+
+```{r}
+#generate species pairs to iterate models through (1 model per species pair)
+spp <- unique(ol_comb$species)
+spp_pair <- combn(spp, 2)
+
+#filter to 1 species pair
+op <- ol_comb %>% filter(species == spp_pair[1, 6] & species2 == spp_pair[2, 6]) %>% 
+  filter(season == season2 & yr == yr2)
+```
+
+```{r}
+be_m1 <- stan_lmer(HR_res_ol ~ 1 + HRsize_prop_ol + (1 + HRsize_prop_ol | cid),
+                   data = op,
+                   prior_intercept = student_t(3, 0.2, 2.5),
+                   prior = student_t(3, 0, 2.5),
+                   seed = 12345)
+
+summary(be_m1)
+```
+
+
+
+#Hierarcichal bayesian model (brms)- nested individual and species effects
+
+```{r}
+#get info on all parameters for which priors may be specified
+get_prior(data    = ol_comb,
+  family  = gaussian(link = "identity"),
+  formula = HR_res_ol ~ 1 + HRsize_prop_ol + elev_prop_ol + (1 + HRsize_prop_ol + elev_prop_ol |  cid / species))
+```
+
+
+```{r}
+setwd("C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper/Code Output/density_overlap_bayes_models/")
+
+m1 <- brm(
+  data    = ol_comb,
+  family  = gaussian(link = "identity"),
+  formula = HR_res_ol ~ 1 + HRsize_prop_ol + elev_prop_ol + (1 + HRsize_prop_ol + elev_prop_ol |  cid / species) +
+    (1 + HRsize_prop_ol + elev_prop_ol |  cid2 / species2),
+  prior   = c(prior(student_t(3, 0.2, 2.5), class = Intercept),
+              prior(student_t(3, 0, 2.5), class = sd),
+              prior(lkj(1), class = cor),
+              prior(student_t(3, 0, 2.5), class = sigma)),
+  iter    = 100,
+  warmup  = 10,
+  chains  = 3,
+  cores   = 11,
+  thin    = 2,
+  file = "test_model_v01")
+
+summary(m1)
+```
+
+
+
+
+
+#hierarcichal bayesian model from chat GPT
+
+```{r}
+#define number individuals and species
+Nind = length(unique(ol_comb$cid))
+Nsp = length(unique(ol_comb$species))
+
+# Define the Bayesian hierarchical model
+model <- "model {
+  # Prior distributions
+  alpha ~ dnorm(0, 0.001)
+  beta ~ dnorm(0, 0.001)
+  sigma ~ dunif(0, 100)
+
+  # Likelihood
+  for (i in 1:N) {
+    y[i] ~ dnorm(mu[i], sigma)
+    mu[i] <- alpha + beta * x[i] + u[ind[i]] + v[spp[i]]
+  }
+
+  # Random effects
+  for (j in 1:Nind) {
+    u[j] ~ dnorm(0, tau_u)
+  }
+
+  for (k in 1:Nsp) {
+    v[k] ~ dnorm(0, tau_v)
+  }
+
+  # Hyperpriors for variance parameters
+  tau_u ~ dgamma(0.001, 0.001)
+  tau_v ~ dgamma(0.001, 0.001)
+}"
+
+# Set the initial values for the MCMC sampler
+init <- function(){
+  list("alpha" = rnorm(1, 0, 1),
+             "beta" = rnorm(1, 0, 1),
+             "sigma" = runif(1, 0, 10),
+             "u" = c(0, rnorm(Nind, 0, 1)),
+             "v" = c(0, rnorm(Nsp, 0, 1)),
+             "tau_u" = rgamma(1, 0.001, 0.001),
+             "tau_v" = rgamma(1, 0.001, 0.001))
+}
+
+# Set the parameters to monitor during the MCMC sampler
+parameters <- c("alpha", "beta", "sigma", "u", "v", "tau_u", "tau_v")
+
+# Set the number of iterations for the MCMC sampler
+n.iter <- 1000
+
+# Set the number of burn-in iterations for the MCMC sampler
+n.burnin <- 500
+
+# Set the thinning interval for the MCMC sampler
+n.thin <- 5
+
+#Set the number of chains to length of init list
+n.chains <- length(init)
+
+# Create the list of data to pass to JAGS
+data.list <- list(N = nrow(ol_comb),
+                  Nind = length(unique(ol_comb$cid)),
+                  Nsp = length(unique(ol_comb$species)),
+                  y = ol_comb$HR_res_ol,
+                  x = ol_comb$HRsize_prop_ol,
+                  ind = as.integer(factor(ol_comb$cid)),
+                  spp = as.integer(factor(ol_comb$species)))
+
+# Run the MCMC sampler
+bayes.fit1 <- R2jags::jags(data = data.list, inits = init, parameters.to.save = parameters,
+             model.file = textConnection(model), n.iter = n.iter,
+             n.burnin = n.burnin, n.thin = n.thin, n.chains = n.chains)
+
+
+# Summarize the posterior distribution of the model parameters
+jagsfit.mcmc <- as.mcmc(mcmc)
+
+summary.mcmc(mcmc)
+print(mcmc)
+```
+
+

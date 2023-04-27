@@ -120,21 +120,43 @@ print(ta)
 
 ```
 
+#Defining bins with artificial definition of 'resting' behavior
+
+```{r}
+#look at 0.25 quantile
+quantile(data_list_filt[[2]][[5]]$SL, 0.25, na.rm = T)
+
+#quantile for 5 bison ranges from 7-103, set resting to 100m
+##artificially define resting behavior for each bison
+for(i in 1:length(data_list_filt[[2]])){
+  data_list_filt[[2]][[i]] <- data_list_filt[[2]][[i]] %>% 
+    mutate(SL =  case_when(SL <= 100 ~ 0,
+                          SL > 100 ~ SL)
+  ) %>%
+  mutate(rest = case_when(SL > 100 ~ 2,
+                          SL == 0 ~ 1)
+  )
+}
+
+```
+
+#Defining bins (original)
 
 ```{r}
 # Define bin number and limits for turning angles by species
-angle.bin.lims = seq(from=0, to=360, by=360/8)  #8 bins
+angle.bin.lims = seq(from=0, to=360, by=360/4)  #4 bins
 
 # Define bin number and limits for step lengths
 dist.bin.lims = quantile(bind_rows(data_list_filt[[2]])$SL,
-                       c(0,0.25,0.50,0.75,0.90,1), na.rm=T)  #5 bins
+                        c(0,0.75,1), na.rm=T)  #3 bins
 ```
+
 
 #Segment movement states
 
 ```{r}
 data_list <- data_list_filt[[2]]
-data_list <- data_list[c(1:2)]
+#data_list <- data_list[c(1:2)]
 
 #data_list descretize observations to defined bins
 #DONT FORGET TO DO THIS, R WILL ABORT if YOU DONT IN THE SEGMENT BEHAVIOR
@@ -144,14 +166,21 @@ data_list_d <-  map(data_list,
                  varIn = c("SL", "TA"),
                  varOut = c("SL1", "TA1"))
 
+# Since 0s get lumped into bin 1 for SL, need to add a 6th bin to store only 0s
+data_list_d2 <- data_list_d %>%
+  map(., ~mutate(.x, SL1 = SL1 + 1)) %>%  #to shift bins over from 1-5 to 2-6
+  map(., ~mutate(.x, SL1 = case_when(SL == 0 ~ 1,  #assign 0s to bin 1
+                                    SL != 0 ~ SL1)  #otherwise keep the modified SL bin
+                 ))
 
 # Only retain id and discretized step length (SL) and turning angle (TA) columns
-data_list2 <- purrr::map(data_list_d,
+data_list2 <- purrr::map(data_list_d2,
                    subset,
-                   select = c("id", "SL1", "TA1"))
+                   select = c("id", "SL1", "TA1", "rest"))
 
 
-
+# Pre-specify breakpoints based on 'rest'
+breaks <- map(data_list2, ~find_breaks(dat = ., ind = "rest"))
 ```
 
 ```{r}
@@ -161,10 +190,10 @@ set.seed(1)
 alpha<- 1
 
 # Set number of iterations for the Gibbs sampler
-ngibbs<- 1000
+ngibbs<- 50000
 
 # Set the number of bins used to discretize each data stream
-nbins<- c(5,8)
+nbins<- c(4, 4, 2) #SL, TA, rest bins
 
 progressr::handlers(progressr::handler_progress(clear = FALSE))
 future::plan("multicore", workers = availableCores()-2)
@@ -172,11 +201,43 @@ future::plan("multicore", workers = availableCores()-2)
 library(bayesmove)
 
 dat.res<- segment_behavior(data = data_list2, ngibbs = ngibbs, nbins = nbins,
-                           alpha = alpha)
+                           alpha = alpha, breakpt = breaks)
 
 future::plan(future::sequential)  #return to single core
 ```
 
+
+```{r}
+#check that model converged by inspeciting traceplots of number of breakpoints
+traceplot(data = dat.res, type = "nbrks")
+```
+
+
+```{r}
+#traceplots for the log marginal likelihood per id
+traceplot(data = dat.res, type = "LML")
+```
+
+```{r}
+## Determine MAP for selecting breakpoints
+MAP.est<- get_MAP(dat = dat.res$LML, nburn = 25000)
+MAP.est
+#> [1] 32049 34861 26213
+
+brkpts<- get_breakpts(dat = dat.res$brkpts, MAP.est = MAP.est)
+
+# How many breakpoints estimated per ID?
+apply(brkpts[,-1], 1, function(x) length(purrr::discard(x, is.na)))
+#> id1 id2 id3 
+#>  37  45  40
+```
+
+
+```{r}
+#look at breakpoints
+plot_breakpoints(data = data_list_d2, as_date = FALSE, var_names = c("SL","TA","rest"),
+                 var_labels = c("Step Length (km)", "Turning Angle (rad)", "Resting"), brkpts = brkpts)
+```
 
 
 

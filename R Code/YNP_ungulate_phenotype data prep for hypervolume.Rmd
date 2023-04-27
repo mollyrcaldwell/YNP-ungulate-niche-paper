@@ -1,0 +1,57 @@
+---
+title: "YNP Ungulates phenotype dataset compilation for hypervolumes"
+author: "Molly Caldwell"
+date: "3/3/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper")
+```
+
+```{r}
+#load packages
+library(tidyverse)
+```
+
+```{r}
+#load previously calculated phenotypes (per GPS point values)
+pt_data <- readRDS("~/UWyo/PhD project/YNP-ungulate-niche-proj/Data/GPS data/Cleaned/allspp_cleanedGPSdata_seasonal_moveparams_3.2022.rds")
+
+hab_data <- readRDS("~/UWyo/PhD project/YNP-ungulate-niche-proj/Code output/individual_habitat_metrics/allindiv_gpspts_habextract.rds")
+
+ms_data <- readRDS("./Code Output/move_state/all_pts_movestate_manual.rds")
+```
+
+```{r}
+#reduce  data to metrics for joining with move state data
+pt_data <- pt_data %>% 
+  select(c(id_yr_seas, date, speed))
+
+pt_data$geometry <- NULL
+
+hab_data <- hab_data %>% 
+  select(c(id_yr_seas, date, elev, slope, perc_treecov, snowdepth, swe, NDVIVals,
+           IRGVals, maxNDVIdate, maxIRGdate, csumNDVImax))
+
+d_NA <- hab_data %>% 
+  select_if(function(x) any(is.na(x))) %>% 
+  summarise_each(funs(sum(is.na(.))))
+
+ms_data <- ms_data %>% 
+  select(c(cid, species, date, yr, season, id_yr_seas, move_state))
+
+#join point and habitat data with movement state data
+phen <- left_join(ms_data, pt_data, by = c("id_yr_seas", "date"))
+phen <- left_join(phen, hab_data, by = c("id_yr_seas", "date"))
+```
+
+```{r}
+#save phenotype data (per point)
+saveRDS(phen, "./Code Output/all_pts_phen_comb_4.26.2023.rds")
+```
+
+
+
+

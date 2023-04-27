@@ -1,0 +1,93 @@
+---
+title: "Untitled"
+author: "Molly Caldwell"
+date: "2023-03-17"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper/")
+```
+
+```{r}
+#load packages
+library(tidyverse)
+library(parallel)
+library(compiler)
+library(sf)
+```
+
+#Load data
+
+```{r}
+#load data with movement parameters calculated
+data <- readRDS("C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper/Data/allspp_cleanedGPSdata_seasonal_moveparams_3.2023.rds")
+
+```
+
+#Set movement parameters based on step length quantiles and turn angle
+
+```{r}
+data <- data %>% 
+  mutate(adj.angle = if_else(rel.angle >= 180, rel.angle - 180, rel.angle)) %>% 
+  group_by(id_yr_seas) %>%  
+  mutate(quant_95_dist = quantile(dist, c(0.95), na.rm = T)) %>%
+  ungroup() %>% 
+  mutate(move_state = case_when(dist <= 30 ~ 1,
+                                dist > 30 & dist <= quant_95_dist ~ 2,
+                                dist >= quant_95_dist ~ 3
+                                ))
+
+#save movestate points
+saveRDS(data, "./Code Output/move_state/all_pts_movestate_manual.rds")
+
+```
+
+```{r}
+#plot lines and points with movestate
+#get lines from buffer HR code for plotting
+load("./stepbuffer_progress.RData")
+
+p_list <- list()
+ids <- unique(data$id_yr_seas)
+
+for(i in 1400:1410){
+  print(i)
+p_list[[i]] <- ggplot() +
+    geom_sf(data = lns[which(lns$id_yr_seas == ids[[i]]),]) +
+    geom_sf(data = data[which(data$id_yr_seas == ids[[i]]),],
+            aes(color = as.factor(move_state))) +
+  ggtitle(ids[[i]])
+}
+```
+
+#Weekly move state proportions    
+
+```{r}
+#add week to data and remove weeks with < 4 days of data (<48 pts)
+data_wk <- data %>% 
+  mutate(week = week(date)) %>% 
+  group_by(cid, yr, week) %>% 
+  mutate(npt_wk = n()) %>% 
+  ungroup() %>% 
+  filter(npt_wk >= 48)
+
+#summarize weekly proportion of movement states (num move state/num weekly pts)
+ms_wk <- data_wk %>% 
+  filter(!is.na(move_state)) %>% 
+  group_by(cid, yr, week, move_state) %>%
+  reframe(mstate_prop_wk = n()/npt_wk) %>% 
+  distinct()
+
+#save move state weekly proportion summary
+saveRDS(ms_wk, "./Code Output/movestate_weekly_proportion_3.2023.rds")
+```
+
+
+
+
+
+
+
+

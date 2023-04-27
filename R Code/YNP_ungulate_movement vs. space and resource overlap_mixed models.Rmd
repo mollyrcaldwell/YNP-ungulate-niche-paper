@@ -1,0 +1,143 @@
+---
+title: "Movement overlap versus space and resource overlap: Mixed effect models"
+author: "Molly Caldwell"
+date: "2023-03-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper")
+```
+
+```{r}
+#load packages
+library(lme4)
+library(tidyverse)
+```
+
+```{r}
+#load density overlap data
+ol_comb <- readRDS("./Code Output/density_overlap/density_overlap_model_data_comb_3.2023.rds")
+
+#add averaged HR, NDVI, IRG overlap value
+ol_comb <- ol_comb %>% 
+  rowwise() %>% 
+  mutate(HR_resource_comb = mean(c(HRol_seas, NDVIVals_prop_ol, IRGVals_prop_ol))) %>% 
+  ungroup()
+
+#only keep pairs from same season and year
+ol_comb <- ol_comb %>% 
+  filter(season == season2 & yr == yr2)
+```
+
+#Bison models
+
+```{r}
+#filter to bison
+bison_ol <- ol_comb %>% 
+  filter(species == "bison")
+
+#standardize predictors
+bison_ol <- bison_ol %>% 
+  mutate(across(contains("ol"), ~as.numeric(scale(.x))))
+```
+
+```{r}
+#model without season
+library(lmerTest)
+bm1 <- lmer(HR_resource_comb ~ HRsize_prop_ol*species2 + elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2 + (1 + HRsize_prop_ol|cid) + (1 + elev_prop_ol|cid) +
+                  (1 + slope_prop_ol|cid) + (1 + treecov_prop_ol|cid) + (1 + ms1_prop_ol|cid) +
+                    (1 + ms2_prop_ol|cid) + (1 + ms3_prop_ol|cid), data = bison_ol)
+
+summary(bm1)
+
+bison_ol %>% 
+    # save predicted values
+    mutate(pred_HRrescomb_m1 = fitted(bm1)) %>% 
+    # graph
+    ggplot(aes(x = HRsize_prop_ol, y = pred_HRrescomb_m1, group = cid, color = cid)) + theme_classic() +
+    geom_line(size=1) 
+```
+
+#hierarcichal bayesian model from chat GPT
+
+```{r}
+# Load the required packages
+library(rjags)
+library(coda)
+
+# Read in the data
+data <- read.csv("mydata.csv")
+
+# Define the Bayesian hierarchical model
+model <- "model {
+  # Prior distributions
+  alpha ~ dnorm(0, 0.001)
+  beta ~ dnorm(0, 0.001)
+  sigma ~ dunif(0, 100)
+
+  # Likelihood
+  for (i in 1:N) {
+    y[i] ~ dnorm(mu[i], sigma)
+    mu[i] <- alpha + beta * x[i] + u[individual[i]] + v[species[i]]
+  }
+
+  # Random effects
+  for (j in 1:Nind) {
+    u[j] ~ dnorm(0, tau_u)
+  }
+
+  for (k in 1:Nsp) {
+    v[k] ~ dnorm(0, tau_v)
+  }
+
+  # Hyperpriors for variance parameters
+  tau_u ~ dgamma(0.001, 0.001)
+  tau_v ~ dgamma(0.001, 0.001)
+}"
+
+# Set the initial values for the MCMC sampler
+init <- list(alpha = rnorm(1, 0, 1),
+             beta = rnorm(1, 0, 1),
+             sigma = runif(1, 0, 10),
+             u = rnorm(Nind, 0, 1),
+             v = rnorm(Nsp, 0, 1),
+             tau_u = rgamma(1, 0.001, 0.001),
+             tau_v = rgamma(1, 0.001, 0.001))
+
+# Set the parameters to monitor during the MCMC sampler
+parameters <- c("alpha", "beta", "sigma", "u", "v", "tau_u", "tau_v")
+
+# Set the number of iterations for the MCMC sampler
+n.iter <- 10000
+
+# Set the number of burn-in iterations for the MCMC sampler
+n.burnin <- 5000
+
+# Set the thinning interval for the MCMC sampler
+n.thin <- 5
+
+# Create the list of data to pass to JAGS
+data.list <- list(N = nrow(data),
+                  Nind = length(unique(data$individual)),
+                  Nsp = length(unique(data$species)),
+                  y = data$niche_overlap,
+                  x = data$environmental_variable,
+                  individual = as.integer(factor(data$individual)),
+                  species = as.integer(factor(data$species)))
+
+# Run the MCMC sampler
+mcmc <- jags(data.list, inits = init, parameters.to.save = parameters,
+             model.file = textConnection(model), n.iter = n.iter,
+             n.burnin = n.burnin, n.thin = n.thin)
+
+# Summarize the posterior distribution of the model parameters
+summary(mcmc)
+
+```
+
+

@@ -1,0 +1,173 @@
+---
+title: "YNP Ungulate move state exploration"
+author: "Molly Caldwell"
+date: "2/27/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper/")
+```
+
+```{r}
+#load packages
+library(tidyverse)
+
+# install from my R-universe repository
+# install.packages("aniMotum", 
+#                  repos = c("https://cloud.r-project.org",
+#                  "https://ianjonsen.r-universe.dev"),
+#                  dependencies = TRUE)
+library(aniMotum)
+library(compiler)
+library(parallel)
+```
+
+#Load data
+
+```{r}
+#load data with movement parameters calculated
+data <- readRDS("C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper/Data/allspp_cleanedGPSdata_seasonal_moveparams_3.2022.rds")
+
+
+#remove bh 08 2021 spring and winter (possible mortality)
+data <- data %>% 
+  filter(id_yr_seas != "BH08_2021_spring" & id_yr_seas != "BH08_2021_winter")
+```
+
+```{r}
+#structure data for aniMotum package
+a_data <- data %>%
+  rename("id" = id_yr_seas) %>% 
+  dplyr::select(c(id, date)) %>% 
+  mutate(lc = "G")
+
+#split into list per individual (aniMotum model run per individual)
+data_ls <- split(as_tibble(a_data), f = a_data$id)
+```
+
+
+```{r}
+#loop move persistence model, and output persistence values per individual
+#create list to save output
+mp_list <- list()
+plot_list <- list()
+
+#enable JIT compiler
+enableJIT(3)
+
+#start parallel processing
+  no_cores <- detectCores()-1
+  clust <- makeCluster(no_cores) 
+  parallel::clusterExport(clust, envir=environment(),
+                varlist=c("data_ls"))
+
+for(i in 735:length(data_ls)){
+  print(paste0("i: ", i))
+  
+fit <- fit_ssm(data_ls[[i]], 
+               vmax = 3, 
+               model = "mp", 
+               time.step = 2,
+               control = ssm_control(verbose = 0))
+
+plot_list[[i]] <- plot(fit, what = "predicted", type = 3, normalise = TRUE)
+
+mp_list[[i]] <- grab(fit, what = "predicted", as_sf = T, normalise = T)
+
+q <- quantile(mp_list[[i]]$g, probs = c(0.1, 0.9), na.rm = T)
+
+mp_list[[i]] <- mp_list[[i]] %>% 
+  mutate(move_state = case_when(g <= q[[1]] ~ 1,
+                                g > q[[1]] & g < q[[2]] ~ 2,
+                                g >= q[[2]] ~ 3))
+}
+
+#end parallel processing
+stopCluster(clust)
+ 
+#disable compiler
+enableJIT(0)
+```
+
+```{r}
+#combine all list elements
+mp_data <- bind_rows(mp_list)
+mp_data <- as.data.frame(mp_data) %>% 
+  rename(id_yr_seas = id) %>% 
+  st_
+
+#save data
+saveRDS(mp_data, "./Code Output/movestate_animotum_data_all.rds")
+
+#join original data with movement model data
+data$rdate <- round_date(data$date, unit = "hours")
+  
+  
+data_move <- left_join(data, mp_data, by = c("id_yr_seas", "rdate" = "date"))
+
+#save data
+saveRDS(data_move, "./Code Output/gpsdata_movestate_animotum.rds")
+
+``` 
+
+```{r}
+#get lines from buffer HR code for plotting
+load("./stepbuffer_progress.RData")
+```
+
+```{r}
+#per species, look at distribution of step lengths and turn angle per move state
+spp <- unique(data_move$species)
+
+for(i in 1:length(spp)){
+  data_spp <- data_move %>% filter(species == spp[[i]])
+  q <- quantile(data_spp$g, c(0.25, 0.9))
+  
+  data_spp <- data_spp %>% 
+    mutate(ms = case_when(g <= q[[1]] ~ 1,
+                          g > q[[1]] & g < q[[2]] ~ 2,
+                          g >= q[[2]] ~ 3))
+  
+  hdist <- ggplot(data = data_spp, aes(x = dist, fill = as.factor(ms))) +
+    geom_histogram(alpha = 0.5) +
+    xlim(c(0,2000)) +
+    facet_wrap(~ms)
+}
+```
+
+```{r}
+q <- 
+data_move <- data_move %>% 
+  mutate(ms = case_)
+```
+
+
+
+
+```{r}
+#set all steps under 20m distance to resting (move_state 1)
+data_move <- data_
+```
+
+
+
+```{r}
+ids <- unique(data_move$id_yr_seas)
+
+for(i in 1:length(ids)){
+  p <- ggplot() +
+    geom_sf(data = lns[which(lns$id_yr_seas == ids[[i]]),]) +
+    geom_sf(data = data_move[which(data_move$id_yr_seas == ids[[i]]),],
+            aes(color = as.factor(move_state))) +
+    ggtitle(ids[[i]])
+    
+    plot(st_geometry(data_move[which(data_move$id_yr_seas == ids[[i]]),]),
+            col = data_move[which(data_move$id_yr_seas == ids[[i]]),]$move_state)
+  
+  return(p)
+}
+```
+
+

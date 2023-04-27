@@ -1,0 +1,73 @@
+---
+title: "Movement overlap versus space and resource overlap: Bayesian Heirarchical Models"
+author: "Molly Caldwell"
+date: "2023-03-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper")
+```
+
+```{r}
+#load packages
+library(brms)
+library(tidyverse)
+library(haven)
+```
+
+```{r}
+#load density overlap data
+ol_comb <- readRDS("./Code Output/density_overlap/density_overlap_model_data_comb_3.2023.rds")
+
+#add averaged HR, NDVI, IRG overlap value
+ol_comb <- ol_comb %>% 
+  rowwise() %>% 
+  mutate(HR_resource_comb = mean(c(HRol_seas, NDVIVals_prop_ol, IRGVals_prop_ol))) %>% 
+  ungroup()
+
+#only keep pairs from same season and year
+ol_comb <- ol_comb %>% 
+  filter(season == season2 & yr == yr2)
+```
+
+#Bison models
+
+```{r}
+#filter to bison
+bison_ol <- ol_comb %>% 
+  filter(species == "bison")
+
+#standardize predictors
+bison_ol <- bison_ol %>% 
+  mutate(across(contains("ol"), ~as.numeric(scale(.x))))
+```
+
+```{r}
+#Bison model 1- no season
+setwd("./Code Output/density_overlap_bayes_models/")
+
+bm1 <- brm(
+  data    = bison_ol,
+  family  = gaussian(link = "identity"),
+  formula = HR_resource_comb ~ HRsize_prop_ol*species2 + elev_prop_ol*species2 +
+                  slope_prop_ol*species2 + treecov_prop_ol*species2 + 
+                  ms1_prop_ol*species2 + ms2_prop_ol*species2 +
+                  ms3_prop_ol*species2 + (1 + HRsize_prop_ol|cid) + (1 + elev_prop_ol|cid) +
+                  (1 + slope_prop_ol|cid) + (1 + treecov_prop_ol|cid) + (1 + ms1_prop_ol|cid) +
+                    (1 + ms2_prop_ol|cid) + (1 + ms3_prop_ol|cid),
+  prior   = c(prior(normal(0, 2), class = Intercept),
+              prior(normal(0,1), class = b),
+              prior(cauchy(1, 5), class = b, coef = "species:bison"),
+              prior(lkj(2), class = cor)),
+  iter    = 2000,
+  warmup  = 1000,
+  chains  = 2,
+  cores   = 11,
+  thin    = 2,
+  file = "bison_model_NOseas")
+
+summary(m1)
+```
+

@@ -1,0 +1,760 @@
+---
+title: "Weekly spatial phenotypes"
+author: "Molly Caldwell"
+date: "2023-03-19"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper")
+```
+
+```{r}
+library(tidyverse)
+library(sf)
+library(compiler)
+library(parallel)
+```
+
+```{r}
+#load GPS data
+data <- readRDS("./Data/allspp_cleanedGPSdata_seasonal_moveparams_3.2023.rds")
+
+#add week
+data <- data %>% 
+  mutate(week = week(date))
+```
+
+
+#Load weekly phenotypes
+
+```{r}
+#load previously calculated weekly phenotypes per individual
+#weekly buffer HR size
+wk_HRsize <- readRDS("./Code Output/linebuff_HRs_week_50quant_allspp.rds")
+  
+  ##add yr-week variable and remove geometry and buff dist
+  wk_HRsize <- wk_HRsize %>% 
+    mutate(yr_week = paste(yr, week, sep = "_")) %>% 
+    st_drop_geometry() %>% 
+   dplyr::select(-buffer_dist)
+
+#weekly proportion movement states (1 = rest, 2 = forage, 3 = travel)
+wk_mstate <- readRDS("./Code Output/movestate_weekly_proportion_3.2023.rds")
+  
+  ##create new column for each move state proportion for joining with other data
+  wk_mstate_w <- pivot_wider(wk_mstate, names_from = move_state, 
+                             values_from = mstate_prop_wk) %>% 
+    rename(ms_1 = `1`, ms_2 = `2`, ms_3 = `3`) %>% 
+    mutate(yr_week = paste(yr, week, sep = "_"))
+  
+  ##replace NAs in move states as 0 (no zeros were generated if there was no ms3/2/1)
+  wk_mstate_w <- wk_mstate_w %>% 
+    mutate(ms_3 = if_else(is.na(ms_3), 0, ms_3)) %>% 
+    mutate(ms_2 = if_else(is.na(ms_2), 0, ms_2)) %>% 
+    mutate(ms_1 = if_else(is.na(ms_1), 0, ms_1))
+  
+#weekly habitat metrics (elevation, slope, percent tree cover)
+wk_habitat <- readRDS("C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-proj/Code output/individual_habitat_metrics/indiv_weekly_habitat_summ.rds")
+
+  ##add cid and yr_week variables
+  wk_habitat <- wk_habitat %>% 
+    rowwise() %>% 
+    mutate(cid = str_split(id_yr_seas, "_")[[1]][1]) %>% 
+    ungroup() %>% 
+    mutate(yr_week = paste(yr, week, sep = "_"))
+  
+  ##select variables
+  wk_habitat <- wk_habitat %>% 
+    select(c(cid, yr_week, elev_avg, slope_avg, perc_treecov_avg, NDVIVals_avg, IRGVals_avg))
+
+#weekly social network metrics (w/in 250m, 15 min)
+#(just using centrality at the moment)
+# wk_snet_edge <- readRDS("C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-proj/Code output/individual_network_metrics/individual_edge_metrics_week.rds")
+# 
+ wk_snet_node <- readRDS("C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-proj/Code output/individual_network_metrics/individual_node_metrics_week.rds")
+
+  ##rename wk_snet_node variables to match other phenotype data and select only centrality
+wk_snet_node <- wk_snet_node %>%
+  rename(cid = id) %>%
+  dplyr::select(c("centralityScaled", "cid", "yr_week"))
+
+#fidelity (proportion weekly HR buffer overlap with prev week, 4 weeks, 52 weeks)
+
+#green wave surfing (avg. days to peak, IRG, annual integrated NDVI per week)
+
+```
+
+```{r}
+#combine weekly phenotypes into same dataset
+#remove extra yr and week from hr size data
+wk_HRsize <- wk_HRsize %>% 
+  ungroup() %>% 
+  dplyr::select(-c(yr, week))
+
+#join with dataset with least rows (move state) b/c this has the most updated mort filter
+#and filtered out all weeks with < 4 days
+wk_phen <- left_join(wk_mstate_w, wk_HRsize, by = c("cid", "yr_week"))
+wk_phen <- left_join(wk_phen, wk_habitat, by = c("cid", "yr_week")) %>% 
+  distinct(cid, yr_week, .keep_all = T)
+
+wk_phen <- left_join(wk_phen, wk_snet_node, by = c("cid", "yr_week"))
+
+#Export weekly phenotype value data
+saveRDS(wk_phen, "./Code Output/all_wk_move_phen_comb_4.18.2023.rds")
+```
+
+#Calculate phenotype distribution overlap
+1. Generate density distribution of each weekly phenotype per season and individual
+2. Take pairwise proportion overlap of distributions between individuals for same phenotype/season-year
+
+```{r}
+#add id_yr_seas from GPS data to phenotype data
+##reduce GPS data to week, yr, id_yr_seas, cid
+id_data <- data %>% 
+  st_drop_geometry() %>% 
+  dplyr::select(c(cid, week, yr, id_yr_seas)) %>% 
+  distinct(ident = paste(cid, week, yr), .keep_all = T) %>%  #some weeks have 2 id_yr_seas, reduce to first
+  dplyr::select(-ident)
+
+##join weekly phenotype data with id_data
+wk_phen <- left_join(wk_phen, id_data, by = c("cid", "week", "yr"))
+
+#filter out id_yr_seas with less than 4 weeks of data
+wk_phen <- wk_phen %>% 
+  group_by(id_yr_seas) %>% 
+  mutate(n_week = n()) %>% 
+  ungroup() %>% 
+  filter(n_week >= 4)
+
+#check NAs
+d_na <- wk_phen %>% 
+  purrr::map(is.na) %>% 
+  purrr::map(sum)
+
+#remove NAs
+wk_phen <- wk_phen %>% 
+  filter(!is.na(species))
+```
+
+```{r}
+#create lists of each phenotype per id_yr_seas for overlap function
+#home range size
+hr <- wk_phen %>% 
+  dplyr::select(c(id_yr_seas, HR_size_km2)) %>% 
+  group_by(id_yr_seas) %>% 
+  group_split(.keep = F)
+
+names(hr) <- unique(wk_phen$id_yr_seas)
+
+hr <- lapply(hr, unlist, use.names = F)
+
+#proportion movement state 1
+ms_1 <- wk_phen %>% 
+  dplyr::select(c(id_yr_seas, ms_1)) %>% 
+  group_by(id_yr_seas) %>% 
+  group_split(.keep = F)
+
+names(ms_1) <- unique(wk_phen$id_yr_seas)
+ms_1 <- lapply(ms_1, unlist, use.names = F)
+
+#proportion movement state 2
+ms_2 <- wk_phen %>% 
+  dplyr::select(c(id_yr_seas, ms_2)) %>% 
+  group_by(id_yr_seas) %>% 
+  group_split(.keep = F)
+
+names(ms_2) <- unique(wk_phen$id_yr_seas)
+ms_2 <- lapply(ms_2, unlist, use.names = F)
+
+#proportion movement state 3
+ms_3 <- wk_phen %>% 
+  dplyr::select(c(id_yr_seas, ms_3)) %>% 
+  group_by(id_yr_seas) %>% 
+  group_split(.keep = F)
+
+names(ms_3) <- unique(wk_phen$id_yr_seas)
+ms_3 <- lapply(ms_3, unlist, use.names = F)
+
+#elevation
+elev <- wk_phen %>% 
+  dplyr::select(c(id_yr_seas, elev_avg)) %>% 
+  group_by(id_yr_seas) %>% 
+  group_split(.keep = F)
+
+names(elev) <- unique(wk_phen$id_yr_seas)
+elev <- lapply(elev, unlist, use.names = F)
+
+#slope
+slope <- wk_phen %>% 
+  dplyr::select(c(id_yr_seas, slope_avg)) %>% 
+  group_by(id_yr_seas) %>% 
+  group_split(.keep = F)
+
+names(slope) <- unique(wk_phen$id_yr_seas)
+slope <- lapply(slope, unlist, use.names = F)
+
+#perc tree cover
+treecov <- wk_phen %>% 
+  dplyr::select(c(id_yr_seas, perc_treecov_avg)) %>% 
+  group_by(id_yr_seas) %>% 
+  group_split(.keep = F)
+
+names(treecov) <- unique(wk_phen$id_yr_seas)
+treecov <- lapply(treecov, unlist, use.names = F)
+
+#ndvi
+ndvi_names <- wk_phen %>% 
+  dplyr::select(c(id_yr_seas, NDVIVals_avg)) %>% 
+  filter(!is.na(NDVIVals_avg)) %>% 
+  select(id_yr_seas) %>% 
+  distinct()
+
+ndvi <- wk_phen %>% 
+  dplyr::select(c(id_yr_seas, NDVIVals_avg)) %>% 
+  filter(!is.na(NDVIVals_avg)) %>% #3000 are nas, need to look into this
+  group_by(id_yr_seas) %>% 
+  group_split(.keep = F)
+
+names(ndvi) <- ndvi_names$id_yr_seas
+ndvi <- lapply(ndvi, unlist, use.names = F)
+
+#irg
+irg <- wk_phen %>% 
+  dplyr::select(c(id_yr_seas, IRGVals_avg)) %>% 
+  filter(!is.na(IRGVals_avg)) %>% 
+  group_by(id_yr_seas) %>% 
+  group_split(.keep = F)
+
+names(irg) <- ndvi_names$id_yr_seas
+irg <- lapply(irg, unlist, use.names = F)
+
+
+#centrality
+# cent <- wk_phen %>% 
+#   dplyr::select(c(id_yr_seas, centralityScaled)) %>% 
+#   group_by(id_yr_seas) %>% 
+#   group_split(.keep = F)
+# 
+# names(cent) <- unique(wk_phen$id_yr_seas)
+```
+
+#Home range size overlap
+Per id_yr_seas, weekly buffer HR size
+
+```{r}
+#generate all pairwise combos of id_yr_seas for iterating overlap through
+ids <- unique(wk_phen$id_yr_seas)
+id_comb <- combn(ids, 2)
+
+#setup compiler
+enableJIT(3)
+
+##setup cluster to run on multiple cores
+  #set number of cores to use (1 less than you have)
+no_cores <- detectCores()-1
+# Setup cluster
+clust <- makeCluster(no_cores) 
+# export the objects you need for your calculations from your environment to each node's environment
+clusterExport(clust, varlist=c("hr", "id_comb"))
+
+# now calculate, for each id pair, how much their phenotype distributions overlap
+hr_ol <- do.call(rbind, lapply(1:ncol(id_comb), function(i){
+  print(paste0("i: ", i))
+  
+  id1 <- id_comb[1, i] #pull first id from pair
+  id2 <- id_comb[2, i] #second id from pair
+  
+  hr_s <- list(hr[[id1]], hr[[id2]]) #combine selected ids weekly phen values into same list
+  
+  tmp <- overlapping::overlap(hr_s, nbins = 50)
+ 
+  tmp_df <- data.frame(HRsize_prop_ol = as.numeric(tmp[["OV"]]))
+  
+  tmp_df$id_yr_seas1 <- id1
+  tmp_df$id_yr_seas2 <- id2
+  
+  return(tmp_df)
+}))
+
+stopCluster(clust)#stop the parallelization framework
+enableJIT(0) #stop compiler
+```
+
+#NDVI overlap
+Per id_yr_seas, average NDVI values per week
+
+```{r}
+#generate all pairwise combos of id_yr_seas for iterating overlap through
+ids <- ndvi_names$id_yr_seas #shortened b/c ndvi has NAs
+id_comb <- combn(ids, 2)
+
+#setup compiler
+enableJIT(3)
+
+##setup cluster to run on multiple cores
+  #set number of cores to use (1 less than you have)
+no_cores <- detectCores()-1
+# Setup cluster
+clust <- makeCluster(no_cores) 
+# export the objects you need for your calculations from your environment to each node's environment
+clusterExport(clust, varlist=c("ndvi", "id_comb"))
+
+# now calculate, for each id pair, how much their phenotype distributions overlap
+ndvi_ol <- do.call(rbind, lapply(1:ncol(id_comb), function(i){
+  print(paste0("i: ", i))
+  
+  id1 <- id_comb[1, i] #pull first id from pair
+  id2 <- id_comb[2, i] #second id from pair
+  d1 <- ndvi[[id1]] #pull first id data
+  d2 <- ndvi[[id2]] #pull second id data
+  
+  #only run overlap if both ids' data has at least 4 weeks (ndvi has NAs)
+  
+  if(length(d1) >= 4 & length(d2) >= 4){
+  ls <- list(d1, d2) #combine selected ids weekly phen values into same list
+  
+  tmp <- overlapping::overlap(ls, nbins = 50)
+ 
+  tmp_df <- data.frame(NDVIVals_prop_ol = as.numeric(tmp[["OV"]]))
+  
+  tmp_df$id_yr_seas1 <- id1
+  tmp_df$id_yr_seas2 <- id2
+  
+  return(tmp_df)
+  }
+}))
+
+stopCluster(clust)#stop the parallelization framework
+
+#save data output
+saveRDS(ndvi_ol, "./Code Output/density_overlap/ndviVals_weekly_density_overlap_indiv_3.20.2023.rds")
+```
+
+#IRG overlap
+Per id_yr_seas, average IRG values per week
+
+```{r}
+#generate all pairwise combos of id_yr_seas for iterating overlap through
+ids <- ndvi_names$id_yr_seas #shortened b/c irg has NAs
+id_comb <- combn(ids, 2)
+
+#setup compiler
+#enableJIT(3)
+
+##setup cluster to run on multiple cores
+  #set number of cores to use (1 less than you have)
+no_cores <- detectCores()-1
+# Setup cluster
+clust <- makeCluster(no_cores) 
+# export the objects you need for your calculations from your environment to each node's environment
+clusterExport(clust, varlist=c("irg", "id_comb"))
+
+# now calculate, for each id pair, how much their phenotype distributions overlap
+irg_ol <- do.call(rbind, lapply(1:ncol(id_comb), function(i){
+  print(paste0("i: ", i))
+  
+  id1 <- id_comb[1, i] #pull first id from pair
+  id2 <- id_comb[2, i] #second id from pair
+  d1 <- irg[[id1]] #pull first id data
+  d2 <- irg[[id2]] #pull second id data
+  
+  #only run overlap if both ids' data has at least 4 weeks (irg has NAs)
+  
+  if(length(d1) >= 4 & length(d2) >= 4){
+  ls <- list(d1, d2) #combine selected ids weekly phen values into same list
+  
+  tmp <- overlapping::overlap(ls, nbins = 50)
+ 
+  tmp_df <- data.frame(IRGVals_prop_ol = as.numeric(tmp[["OV"]]))
+  
+  tmp_df$id_yr_seas1 <- id1
+  tmp_df$id_yr_seas2 <- id2
+  
+  return(tmp_df)
+  }
+}))
+
+stopCluster(clust)#stop the parallelization framework
+
+#save data output
+saveRDS(irg_ol, "./Code Output/density_overlap/irgVals_weekly_density_overlap_indiv_3.20.2023.rds")
+```
+
+#Elevation overlap
+Per id_yr_seas, average elev values per week
+
+```{r}
+#generate all pairwise combos of id_yr_seas for iterating overlap through
+ids <- unique(wk_phen$id_yr_seas)
+id_comb <- combn(ids, 2)
+
+#setup compiler
+#enableJIT(3)
+
+##setup cluster to run on multiple cores
+  #set number of cores to use (1 less than you have)
+no_cores <- detectCores()-1
+# Setup cluster
+clust <- makeCluster(no_cores) 
+# export the objects you need for your calculations from your environment to each node's environment
+clusterExport(clust, varlist=c("elev", "id_comb"))
+
+# now calculate, for each id pair, how much their phenotype distributions overlap
+elev_ol <- do.call(rbind, lapply(1:ncol(id_comb), function(i){
+  print(paste0("i: ", i))
+  
+  id1 <- id_comb[1, i] #pull first id from pair
+  id2 <- id_comb[2, i] #second id from pair
+  d1 <- elev[[id1]] #pull first id data
+  d2 <- elev[[id2]] #pull second id data
+  
+  #only run overlap if both ids' data has at least 4 weeks (elev has NAs)
+  
+  if(length(d1) >= 4 & length(d2) >= 4){
+  ls <- list(d1, d2) #combine selected ids weekly phen values into same list
+  
+  tmp <- overlapping::overlap(ls, nbins = 50)
+ 
+  tmp_df <- data.frame(elev_prop_ol = as.numeric(tmp[["OV"]]))
+  
+  tmp_df$id_yr_seas1 <- id1
+  tmp_df$id_yr_seas2 <- id2
+  
+  return(tmp_df)
+  }
+}))
+
+stopCluster(clust)#stop the parallelization framework
+
+#save data output
+saveRDS(elev_ol, "./Code Output/density_overlap/elev_weekly_density_overlap_indiv_3.20.2023.rds")
+```
+
+#Slope overlap
+Per id_yr_seas, average slope values per week
+
+```{r}
+#generate all pairwise combos of id_yr_seas for iterating overlap through
+ids <- unique(wk_phen$id_yr_seas)
+id_comb <- combn(ids, 2)
+
+#setup compiler
+#enableJIT(3)
+
+##setup cluster to run on multiple cores
+  #set number of cores to use (1 less than you have)
+no_cores <- detectCores()-1
+# Setup cluster
+clust <- makeCluster(no_cores) 
+# export the objects you need for your calculations from your environment to each node's environment
+clusterExport(clust, varlist=c("slope", "id_comb"))
+
+# now calculate, for each id pair, how much their phenotype distributions overlap
+slope_ol <- do.call(rbind, lapply(1:ncol(id_comb), function(i){
+  print(paste0("i: ", i))
+  
+  id1 <- id_comb[1, i] #pull first id from pair
+  id2 <- id_comb[2, i] #second id from pair
+  d1 <- slope[[id1]] #pull first id data
+  d2 <- slope[[id2]] #pull second id data
+  
+  #only run overlap if both ids' data has at least 4 weeks
+  
+  if(length(d1) >= 4 & length(d2) >= 4){
+  ls <- list(d1, d2) #combine selected ids weekly phen values into same list
+  
+  tmp <- overlapping::overlap(ls, nbins = 50)
+ 
+  tmp_df <- data.frame(slope_prop_ol = as.numeric(tmp[["OV"]]))
+  
+  tmp_df$id_yr_seas1 <- id1
+  tmp_df$id_yr_seas2 <- id2
+  
+  return(tmp_df)
+  }
+}))
+
+stopCluster(clust)#stop the parallelization framework
+
+#save data output
+saveRDS(slope_ol, "./Code Output/density_overlap/slope_weekly_density_overlap_indiv_3.20.2023.rds")
+```
+
+#Percent tree cover overlap
+Per id_yr_seas, average percent treecov values per week
+
+```{r}
+#generate all pairwise combos of id_yr_seas for iterating overlap through
+ids <- unique(wk_phen$id_yr_seas)
+id_comb <- combn(ids, 2)
+
+#setup compiler
+#enableJIT(3)
+
+##setup cluster to run on multiple cores
+  #set number of cores to use (1 less than you have)
+no_cores <- detectCores()-1
+# Setup cluster
+clust <- makeCluster(no_cores) 
+# export the objects you need for your calculations from your environment to each node's environment
+clusterExport(clust, varlist=c("treecov", "id_comb"))
+
+# now calculate, for each id pair, how much their phenotype distributions overlap
+treecov_ol <- do.call(rbind, lapply(1:ncol(id_comb), function(i){
+  print(paste0("i: ", i))
+  
+  id1 <- id_comb[1, i] #pull first id from pair
+  id2 <- id_comb[2, i] #second id from pair
+  d1 <- treecov[[id1]] #pull first id data
+  d2 <- treecov[[id2]] #pull second id data
+  
+  #only run overlap if both ids' data has at least 4 weeks
+  
+  if(length(d1) >= 4 & length(d2) >= 4){
+  ls <- list(d1, d2) #combine selected ids weekly phen values into same list
+  
+  tmp <- overlapping::overlap(ls, nbins = 50)
+ 
+  tmp_df <- data.frame(treecov_prop_ol = as.numeric(tmp[["OV"]]))
+  
+  tmp_df$id_yr_seas1 <- id1
+  tmp_df$id_yr_seas2 <- id2
+  
+  return(tmp_df)
+  }
+}))
+
+stopCluster(clust)#stop the parallelization framework
+
+#save data output
+saveRDS(treecov_ol, "./Code Output/density_overlap/perctreecov_weekly_density_overlap_indiv_3.20.2023.rds")
+```
+
+#Movement state 2 (foraging) overlap
+Per id_yr_seas, proportion move state 2 points per week
+
+```{r}
+#generate all pairwise combos of id_yr_seas for iterating overlap through
+ids <- unique(wk_phen$id_yr_seas)
+id_comb <- combn(ids, 2)
+
+#setup compiler
+#enableJIT(3)
+
+##setup cluster to run on multiple cores
+  #set number of cores to use (1 less than you have)
+no_cores <- detectCores()-1
+# Setup cluster
+clust <- makeCluster(no_cores) 
+# export the objects you need for your calculations from your environment to each node's environment
+clusterExport(clust, varlist=c("ms_2", "id_comb"))
+
+# now calculate, for each id pair, how much their phenotype distributions overlap
+ms2_ol <- do.call(rbind, lapply(1:ncol(id_comb), function(i){
+  print(paste0("i: ", i))
+  
+  id1 <- id_comb[1, i] #pull first id from pair
+  id2 <- id_comb[2, i] #second id from pair
+  d1 <- ms_2[[id1]] #pull first id data
+  d2 <- ms_2[[id2]] #pull second id data
+  
+  #only run overlap if both ids' data has at least 4 weeks
+  
+  if(length(d1) >= 4 & length(d2) >= 4){
+  ls <- list(d1, d2) #combine selected ids weekly phen values into same list
+  
+  tmp <- overlapping::overlap(ls, nbins = 50)
+ 
+  tmp_df <- data.frame(ms2_prop_ol = as.numeric(tmp[["OV"]]))
+  
+  tmp_df$id_yr_seas1 <- id1
+  tmp_df$id_yr_seas2 <- id2
+  
+  return(tmp_df)
+  }
+}))
+
+stopCluster(clust)#stop the parallelization framework
+
+#save data output
+saveRDS(ms2_ol, "./Code Output/density_overlap/ms2_weekly_density_overlap_indiv_3.20.2023.rds")
+```
+
+#Movement state 3 (traveling) overlap
+Per id_yr_seas, proportion move state 3 points per week
+
+```{r}
+#generate all pairwise combos of id_yr_seas for iterating overlap through
+ids <- unique(wk_phen$id_yr_seas)
+id_comb <- combn(ids, 2)
+
+#setup compiler
+#enableJIT(3)
+
+##setup cluster to run on multiple cores
+  #set number of cores to use (1 less than you have)
+no_cores <- detectCores()-1
+# Setup cluster
+clust <- makeCluster(no_cores) 
+# export the objects you need for your calculations from your environment to each node's environment
+clusterExport(clust, varlist=c("ms_3", "id_comb"))
+
+# now calculate, for each id pair, how much their phenotype distributions overlap
+ms3_ol <- do.call(rbind, lapply(1:ncol(id_comb), function(i){
+  print(paste0("i: ", i))
+  
+  id1 <- id_comb[1, i] #pull first id from pair
+  id2 <- id_comb[2, i] #second id from pair
+  d1 <- ms_3[[id1]] #pull first id data
+  d2 <- ms_3[[id2]] #pull second id data
+  
+  #only run overlap if both ids' data has at least 4 weeks
+  
+  if(length(d1) >= 4 & length(d2) >= 4){
+  ls <- list(d1, d2) #combine selected ids weekly phen values into same list
+  
+  tmp <- overlapping::overlap(ls, nbins = 50)
+ 
+  tmp_df <- data.frame(ms3_prop_ol = as.numeric(tmp[["OV"]]))
+  
+  tmp_df$id_yr_seas1 <- id1
+  tmp_df$id_yr_seas2 <- id2
+  
+  return(tmp_df)
+  }
+}))
+
+stopCluster(clust)#stop the parallelization framework
+
+#save data output
+saveRDS(ms3_ol, "./Code Output/density_overlap/ms3_weekly_density_overlap_indiv_3.20.2023.rds")
+```
+
+#Movement state 1 (resting) overlap
+Per id_yr_seas, proportion move state 1 points per week
+
+```{r}
+#generate all pairwise combos of id_yr_seas for iterating overlap through
+ids <- unique(wk_phen$id_yr_seas)
+id_comb <- combn(ids, 2)
+
+#setup compiler
+#enableJIT(3)
+
+##setup cluster to run on multiple cores
+  #set number of cores to use (1 less than you have)
+no_cores <- detectCores()-1
+# Setup cluster
+clust <- makeCluster(no_cores) 
+# export the objects you need for your calculations from your environment to each node's environment
+clusterExport(clust, varlist=c("ms_1", "id_comb"))
+
+# now calculate, for each id pair, how much their phenotype distributions overlap
+ms1_ol <- do.call(rbind, lapply(1:ncol(id_comb), function(i){
+  print(paste0("i: ", i))
+  
+  id1 <- id_comb[1, i] #pull first id from pair
+  id2 <- id_comb[2, i] #second id from pair
+  d1 <- ms_1[[id1]] #pull first id data
+  d2 <- ms_1[[id2]] #pull second id data
+  
+  #only run overlap if both ids' data has at least 4 weeks
+  
+  if(length(d1) >= 4 & length(d2) >= 4){
+  ls <- list(d1, d2) #combine selected ids weekly phen values into same list
+  
+  tmp <- overlapping::overlap(ls, nbins = 50)
+ 
+  tmp_df <- data.frame(ms1_prop_ol = as.numeric(tmp[["OV"]]))
+  
+  tmp_df$id_yr_seas1 <- id1
+  tmp_df$id_yr_seas2 <- id2
+  
+  return(tmp_df)
+  }
+}))
+
+stopCluster(clust)#stop the parallelization framework
+
+#save data output
+saveRDS(ms1_ol, "./Code Output/density_overlap/ms1_weekly_density_overlap_indiv_3.20.2023.rds")
+```
+
+
+#WY-TWS Presentation Plots
+
+```{r}
+#weekly HR size overlap example
+#filter to a bison and elk
+wk_HRsize_s <- wk_HRsize %>% 
+  filter(cid %in% c("BI132", "EL2109") & week %in% c(15:28) & yr == 2021) %>% 
+  ungroup()
+
+b <- wk_HRsize_s %>% filter(cid == "BI132") %>% select(HR_size_km2)
+e <- wk_HRsize_s %>% filter(cid == "EL2109") %>% select(HR_size_km2)
+
+o <- overlapping::overlap(list(b$HR_size_km2, e$HR_size_km2))
+
+#plot
+edp <- ggplot(data = wk_HRsize_s, aes(x = HR_size_km2, group = cid, fill = cid)) +
+            scale_fill_manual(values = c("#E69F00","#0072B2")) +
+  xlab("Weekly home range size") +
+  ylab("Density (distribution)") +
+    geom_density(adjust=1.5, alpha=.4) + 
+    theme_bw() +
+  theme(axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        legend.position = "none") 
+```
+
+```{r}
+#irg and ndvi overlap example plots
+wk_habitat_s <- wk_habitat %>% 
+  filter(cid %in% c("BI132", "EL2109") & yr_week %in% c("2021_15", "2021_16",
+            "2021_17", "2021_18", "2021_19", "2021_20", "2021_21", "2021_22",
+            "2021_23", "2021_24", "2021_25", "2021_26", "2021_27", "2021_28")) %>% 
+  ungroup()
+
+bh <- wk_habitat_s %>% filter(cid =="BI132")
+eh <- wk_habitat_s %>% filter(cid == "EL2109")
+
+#overlap ndvi
+o_n <- overlapping::overlap(list(bh$NDVIVals_avg, eh$NDVIVals_avg))
+
+#overlap irg
+o_i <- overlapping::overlap(list(bh$IRGVals_avg, eh$IRGVals_avg))
+
+#ndvi overlap plot
+edp_n <- ggplot(data = wk_habitat_s, aes(x = NDVIVals_avg, group = cid, fill = cid)) +
+            scale_fill_manual(values = c("#E69F00","#0072B2")) +
+  xlab("Weekly vegetation quantity") +
+  ylab("Density (distribution)") +
+    geom_density(adjust=1.5, alpha=.4) + 
+    theme_bw() +
+  theme(axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        legend.position = "none") 
+
+#ndvi overlap plot
+edp_i <- ggplot(data = wk_habitat_s, aes(x = IRGVals_avg, group = cid, fill = cid)) +
+            scale_fill_manual(values = c("#E69F00","#0072B2")) +
+  xlab("Weekly vegetation quality") +
+  ylab("Density (distribution)") +
+    geom_density(adjust=1.5, alpha=.4) + 
+    theme_bw() +
+  theme(axis.title.x = element_text(size=14, face="bold"),
+        axis.text.x = element_text(size = 12),
+        axis.title.y = element_text(size=15, face="bold"),
+        axis.text.y = element_text(size = 12),
+        legend.position = "none") 
+```
+
+
+

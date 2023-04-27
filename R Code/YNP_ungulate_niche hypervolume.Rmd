@@ -1,0 +1,193 @@
+---
+title: "YNP Ungulates: phenotype hypervolumes"
+author: "Molly Caldwell"
+date: "3/3/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper")
+```
+
+```{r}
+library(tidyverse)
+library(hypervolume)
+```
+
+#Phenotypes per point
+
+```{r}
+#load and prep point phenotype data
+phen_pt <- readRDS("./Code Output/all_pts_phen_comb_4.26.2023.rds")
+
+#set geometry to long and lat
+phen_pt <- phen_pt %>% 
+  mutate(long = unlist(purrr::map(phen_pt$geometry,1)),
+           lat = unlist(purrr::map(phen_pt$geometry,2))) 
+
+phen_pt$geometry <- NULL
+
+#pull axes names
+axes <- names(select_if(phen_pt, is.double) %>% select(-c("date", "long", "lat", "move_state"))) 
+
+#scale all numeric axes and set move state to factor
+phen_pt <- phen_pt %>% 
+  mutate_at(axes, ~(scale(as.numeric(.)) %>% as.vector)) %>% 
+  mutate(move_state = as.factor(move_state))
+
+#check for NAs- a lot, should double check what's going on with ndvi/irg
+d_NA <- phen_pt %>% 
+  select_if(function(x) any(is.na(x))) %>% 
+  summarise_each(funs(sum(is.na(.))))
+
+#remove NAs
+phen_pt <- phen_pt %>% 
+  drop_na()
+```
+
+```{r}
+#subset to bison and elk for trial
+phen_pt <- phen_pt %>% 
+  filter(species %in% c("bison", "elk"))
+
+#check correlation move and resource phenotypes
+m_pt <- phen_pt %>% 
+  select(c(move_state, speed, elev, slope, perc_treecov, snowdepth, swe)) %>% 
+  corrr::correlate() #snowdepth and swe highly correlated (0.9). only using snowdepth
+
+r_pt <- phen_pt %>% 
+  select(c(IRGVals, NDVIVals)) %>% 
+  corrr::correlate()
+```
+
+```{r}
+b <- phen_pt %>% filter(species == "bison")
+e <- phen_pt %>% filter(species == "elk")
+
+b_id <- unique(b$id_yr_seas)
+e_id <- unique(e$id_yr_seas)
+
+ol_df_bison <- data.frame(cid1 = NA, cid2 = NA, year = NA, season = NA, move_ol = NA,
+                    resource_ol = NA)
+for(i in 1:length(b_id)){
+  b_dat <- b %>% filter(id_yr_seas == b_id[i])
+  year <- as.numeric(b_dat$yr[1])
+  seas <- b_dat$season[1]
+  
+  e_dat <- e %>%
+    mutate(yr = as.numeric(yr)) %>% 
+    filter(yr == year & season == seas)
+  
+  etr <- unique(e_dat$id_yr_seas)
+  
+  for(j in 1:length())
+}
+
+
+
+#hypervolume list, bison
+move_hv_bison <- list()
+res_hv_bison <- list()
+
+for(i in 1:length(b_id)){
+  b_dat <- b %>% filter(id_yr_seas == b_id[i])
+  move_hv
+  bw <- estimate_bandwidth(b_dat)
+b}
+```
+
+
+
+```{r}
+b <- estimate_bandwidth(d)
+b2 <- estimate_bandwidth(d2)
+
+HV_mphen <- hypervolume_gaussian(d, name = "BH01_2017", kde.bandwidth = b, 
+                                 quantile.requested = 0.9)
+
+HV_mphen2 <- hypervolume_gaussian(d2, name = "BH02_2017", kde.bandwidth = b2, 
+                                 quantile.requested = 0.9)
+
+
+v1 <- get_volume(HV_mphen)
+v2 <- get_volume(HV_mphen2)
+
+plot(hypervolume_join(HV_mphen, HV_mphen2), colors = c("red","blue"), 
+     show.random = T, show.centroid = FALSE)
+
+
+hv_s  <- hypervolume_set(HV_mphen, HV_mphen2, check.memory = F)
+
+plot(hypervolume_join(HV_mphen, HV_mphen2, hv_s[["Intersection"]]), colors = c("red","blue", "purple"), 
+     show.random = T, show.centroid = FALSE)
+
+frac_ol <- hv_s@HVList$Intersection@Volume / hv_s@HVList$Union@Volume
+
+ol_stat <- hypervolume_overlap_statistics(hv_s)
+```
+
+
+
+
+#Weekly phenotypes
+
+```{r}
+#load weekly phenotype data
+data <- readRDS("./Code Output/all_wk_move_phen_comb_4.18.2023.rds")
+
+#pull axes names
+axes <- names(select_if(data, is.double) %>% select(-c("week", "centralityScaled"))) 
+
+#scale all axes
+data <- data %>% 
+  mutate_at(axes, ~(scale(as.numeric(.)) %>% as.vector))
+
+#create dataset with only movement 
+dm <- data %>% 
+  select(c(HR_size_km2, elev_avg, slope_avg, ms_1, perc_treecov_avg, centralityScaled, cid, yr, week))
+
+```
+
+
+
+
+```{r}
+b <- estimate_bandwidth(d)
+b2 <- estimate_bandwidth(d2)
+
+HV_mphen <- hypervolume_gaussian(d, name = "BH01_2017", kde.bandwidth = b, 
+                                 quantile.requested = 0.9)
+
+HV_mphen2 <- hypervolume_gaussian(d2, name = "BH02_2017", kde.bandwidth = b2, 
+                                 quantile.requested = 0.9)
+
+
+v1 <- get_volume(HV_mphen)
+v2 <- get_volume(HV_mphen2)
+
+plot(hypervolume_join(HV_mphen, HV_mphen2), colors = c("red","blue"), 
+     show.random = T, show.centroid = FALSE)
+
+
+hv_s  <- hypervolume_set(HV_mphen, HV_mphen2, check.memory = F)
+
+plot(hypervolume_join(HV_mphen, HV_mphen2, hv_s[["Intersection"]]), colors = c("red","blue", "purple"), 
+     show.random = T, show.centroid = FALSE)
+
+frac_ol <- hv_s@HVList$Intersection@Volume / hv_s@HVList$Union@Volume
+
+ol_stat <- hypervolume_overlap_statistics(hv_s)
+```
+
+
+
+
+
+
+
+
+
+
+
+
