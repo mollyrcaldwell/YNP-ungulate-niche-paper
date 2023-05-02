@@ -44,7 +44,7 @@ op <- ol_comb %>% filter(species == spp_pair[1, 6] & species2 == spp_pair[2, 6])
 ```
 
 ```{r}
-be_m1 <- stan_lmer(HR_res_ol ~ 1 + HRsize_prop_ol + (1 + HRsize_prop_ol | cid),
+be_m1 <- stan_lmer(HR_res_ol ~ 1 + HRsize_prop_ol + (1 + HRsize_prop_ol | cid2/cid),
                    data = op,
                    prior_intercept = student_t(3, 0.2, 2.5),
                    prior = student_t(3, 0, 2.5),

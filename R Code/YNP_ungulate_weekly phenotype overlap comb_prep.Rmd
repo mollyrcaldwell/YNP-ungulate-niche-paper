@@ -1,0 +1,146 @@
+---
+title: "Weekly phenotype combined prep"
+author: "Molly Caldwell"
+date: "2023-03-19"
+output: html_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, error = FALSE)
+knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper")
+```
+
+```{r}
+library(tidyverse)
+```
+
+```{r}
+#load phenotype overlaps (weekly phenotypes, per indiv and season)
+HRsize_ol <- readRDS("./Code Output/density_overlap/bufferHRsize_weekly_density_overlap_indiv_3.20.2023.rds")
+elev_ol <- readRDS("./Code Output/density_overlap/elev_weekly_density_overlap_indiv_3.20.2023.rds")
+slope_ol <- readRDS("./Code Output/density_overlap/slope_weekly_density_overlap_indiv_3.20.2023.rds")
+treecov_ol <- readRDS("./Code Output/density_overlap/perctreecov_weekly_density_overlap_indiv_3.20.2023.rds")
+ms1_ol <- readRDS("./Code Output/density_overlap/ms1_weekly_density_overlap_indiv_3.20.2023.rds")
+ms2_ol <- readRDS("./Code Output/density_overlap/ms2_weekly_density_overlap_indiv_3.20.2023.rds")
+ms3_ol <- readRDS("./Code Output/density_overlap/ms3_weekly_density_overlap_indiv_3.20.2023.rds")
+
+HR_ol <- readRDS("./Code Output/bufferHR/seasonal_bufferHR_overlap_allindiv.rds")
+NDVI_ol <- readRDS("./Code Output/density_overlap/ndviVals_weekly_density_overlap_indiv_3.20.2023.rds")
+IRG_ol <- readRDS("./Code Output/density_overlap/irgVals_weekly_density_overlap_indiv_3.20.2023.rds")
+```
+
+
+```{r}
+#combine overlap data- have to combine twice, with ids switched because HR did both sides, prop ol only does it once
+ol_comb <- left_join(HR_ol, HRsize_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, HRsize_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(HRsize_prop_ol = HRsize_prop_ol.x) %>% 
+  mutate(HRsize_prop_ol = if_else(is.na(HRsize_prop_ol), HRsize_prop_ol.y, 
+                                  HRsize_prop_ol)) %>% 
+  select(-HRsize_prop_ol.y) %>% 
+  filter(!is.na(HRsize_prop_ol))
+
+#rest of joins
+ol_comb <- left_join(ol_comb, elev_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, elev_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(elev_prop_ol = elev_prop_ol.x) %>% 
+  mutate(elev_prop_ol = if_else(is.na(elev_prop_ol), elev_prop_ol.y, 
+                                  elev_prop_ol)) %>% 
+  select(-elev_prop_ol.y) %>% 
+  filter(!is.na(elev_prop_ol))
+
+ol_comb <- left_join(ol_comb, slope_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, slope_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(slope_prop_ol = slope_prop_ol.x) %>% 
+  mutate(slope_prop_ol = if_else(is.na(slope_prop_ol), slope_prop_ol.y, 
+                                  slope_prop_ol)) %>% 
+  select(-slope_prop_ol.y) %>% 
+  filter(!is.na(slope_prop_ol))
+
+ol_comb <- left_join(ol_comb, treecov_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, treecov_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(treecov_prop_ol = treecov_prop_ol.x) %>% 
+  mutate(treecov_prop_ol = if_else(is.na(treecov_prop_ol), treecov_prop_ol.y, 
+                                  treecov_prop_ol)) %>% 
+  select(-treecov_prop_ol.y) %>% 
+  filter(!is.na(treecov_prop_ol))
+
+ol_comb <- left_join(ol_comb, ms1_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, ms1_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(ms1_prop_ol = ms1_prop_ol.x) %>% 
+  mutate(ms1_prop_ol = if_else(is.na(ms1_prop_ol), ms1_prop_ol.y, 
+                                  ms1_prop_ol)) %>% 
+  select(-ms1_prop_ol.y) %>% 
+  filter(!is.na(ms1_prop_ol))
+
+ol_comb <- left_join(ol_comb, ms2_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, ms2_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(ms2_prop_ol = ms2_prop_ol.x) %>% 
+  mutate(ms2_prop_ol = if_else(is.na(ms2_prop_ol), ms2_prop_ol.y, 
+                                  ms2_prop_ol)) %>% 
+  select(-ms2_prop_ol.y) %>% 
+  filter(!is.na(ms2_prop_ol))
+
+ol_comb <- left_join(ol_comb, ms3_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, ms3_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(ms3_prop_ol = ms3_prop_ol.x) %>% 
+  mutate(ms3_prop_ol = if_else(is.na(ms3_prop_ol), ms3_prop_ol.y, 
+                                  ms3_prop_ol)) %>% 
+  select(-ms3_prop_ol.y) %>% 
+  filter(!is.na(ms3_prop_ol))
+
+ol_comb <- left_join(ol_comb, NDVI_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, NDVI_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(NDVIVals_prop_ol = NDVIVals_prop_ol.x) %>% 
+  mutate(NDVIVals_prop_ol = if_else(is.na(NDVIVals_prop_ol), NDVIVals_prop_ol.y, 
+                                  NDVIVals_prop_ol)) %>% 
+  select(-NDVIVals_prop_ol.y) %>% 
+  filter(!is.na(NDVIVals_prop_ol))
+
+
+
+ol_comb <- left_join(ol_comb, IRG_ol, by = c("id_yr_seas" = "id_yr_seas1", "id_yr_seas2"))
+ol_comb <- left_join(ol_comb, IRG_ol, by = c("id_yr_seas" = "id_yr_seas2", "id_yr_seas2" = "id_yr_seas1"))
+
+#replace nas hr size
+ol_comb <- ol_comb %>% 
+  rename(IRGVals_prop_ol = IRGVals_prop_ol.x) %>% 
+  mutate(IRGVals_prop_ol = if_else(is.na(IRGVals_prop_ol), IRGVals_prop_ol.y, 
+                                  IRGVals_prop_ol)) %>% 
+  select(-IRGVals_prop_ol.y) %>% 
+  filter(!is.na(IRGVals_prop_ol))
+
+#rename hr overlap
+ol_comb <- ol_comb %>% 
+  rename(HRol_seas = prop_overlap)
+```
+
+```{r}
+#save overlap data
+saveRDS(ol_comb, "./Code Output/density_overlap/density_overlap_model_data_comb_3.2023.rds")
+```

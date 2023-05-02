@@ -7,15 +7,17 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, error = FALSE)
-knitr::opts_knit$set(root.dir = "C:/Users/mcaldwe2/OneDrive - University of Wyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper")
+knitr::opts_knit$set(root.dir = "~/Library/CloudStorage/OneDrive-UniversityofWyoming/Documents/UWyo/PhD project/YNP-ungulate-niche-paper")
 ```
 
 ```{r}
 library(tidyverse)
 library(hypervolume)
+library(compiler)
+library(parallel)
 ```
 
-#Phenotypes per point
+#Prep phenotypes per point data
 
 ```{r}
 #load and prep point phenotype data
@@ -36,21 +38,79 @@ phen_pt <- phen_pt %>%
   mutate_at(axes, ~(scale(as.numeric(.)) %>% as.vector)) %>% 
   mutate(move_state = as.factor(move_state))
 
-#check for NAs- a lot, should double check what's going on with ndvi/irg
+#check for NAs 
 d_NA <- phen_pt %>% 
   select_if(function(x) any(is.na(x))) %>% 
   summarise_each(funs(sum(is.na(.))))
 
-#remove NAs
+#remove NAs of NDVI and IRG any season, remove NAs of snowdepth in only winter
 phen_pt <- phen_pt %>% 
-  drop_na()
+  drop_na(NDVIVals, IRGVals, move_state, speed) %>% 
+  mutate(snowdepth = if_else(is.na(snowdepth) & season == "winter", 9999, snowdepth)) %>% 
+  filter(snowdepth != 9999)
 ```
 
-```{r}
-#subset to bison and elk for trial
-phen_pt <- phen_pt %>% 
-  filter(species %in% c("bison", "elk"))
+#Subset data to only days where all individuals per season have data
 
+```{r}
+#loop through seasons, subsetting only days where all individuals have data
+#create unique season-yr to loop through and date only column
+phen_pt <- phen_pt %>% 
+  mutate(seas_yr = paste(season, yr, sep = "_"),
+         date_only = as.Date(date, tz = "MST"))
+
+u_syr <- unique(phen_pt$seas_yr)
+
+#setup just in time compiler
+enableJIT(3)
+
+#prepare parallel processing
+  no_cores <- detectCores()-1
+  print(paste0("Initiating parallel processing on ", no_cores, " cores."))
+  clust <- makeCluster(no_cores) 
+  parallel::clusterExport(clust, envir=environment(),
+                varlist=c("u_syr", "phen_pt"))
+
+#do call loop
+phen_sub <- do.call(rbind, clusterApplyLB(clust, 1:length(u_syr), function(i){
+  require("tidyverse")
+  
+  print(paste0("i: ", i))
+  #grab data matching season_yr
+  d <- phen_pt %>% filter(seas_yr == u_syr[i])
+  
+ #summarize number points per day per individual
+  d_summ <- d %>% 
+    group_by(cid, date_only) %>% 
+    summarize(n_pts = n()) %>% 
+    ungroup()
+  
+  #fill in any 0s (days without data)
+  d_compl <- d_summ %>% 
+    complete(cid, date_only, fill = list(n_pts = 0))
+  
+  #pull days that any individual has < 6 pts
+  i_days <- d_compl %>% 
+              filter(n_pts < 6) %>% 
+              select(date_only) %>% 
+              distinct()
+  
+  #reduce data set to only days where all individuals have at least 6 pts
+  d_sub <- d %>% 
+    filter(!date_only %in% i_days$date_only)
+
+  #return subsetted data
+  return(d_sub)
+  
+  }))
+
+stopCluster(clust) #end parallelization
+
+```
+
+#Hypervolume overlap calculations
+
+```{r}
 #check correlation move and resource phenotypes
 m_pt <- phen_pt %>% 
   select(c(move_state, speed, elev, slope, perc_treecov, snowdepth, swe)) %>% 
@@ -62,40 +122,412 @@ r_pt <- phen_pt %>%
 ```
 
 ```{r}
-b <- phen_pt %>% filter(species == "bison")
-e <- phen_pt %>% filter(species == "elk")
+#for each season-yr, calculate pairwise hypervolume overlap between all individuals
+#hypervolume overlap is calculated for 1) movement phenotypes and 2) space/vegetation phenotypes
+#subsetted data used (all indiv have at least 6 pts/day per season-yr)
+  
+ol_list <- list() #empty list to save output
+
+for(j in 1:2){
+  print(paste0("j: ", j))
+  
+  #grab data matching season_yr
+  d <- phen_sub %>% filter(seas_yr == u_syr[j])
+  
+  u_ids <- unique(d$cid)
+  p_ids <- combn(u_ids, 2)
+    
+    #prepare parallel processing
+  no_cores <- detectCores()-1
+  clust <- makeCluster(no_cores) 
+  parallel::clusterExport(clust, envir=environment(),
+                varlist=c("u_ids", "p_ids", "d"))
+#do call loop
+phen_ol <- do.call(rbind, clusterApplyLB(clust, 1:2, function(k){
+  require("tidyverse")
+  require("hypervolume")
+    print(paste0("k: ", k))
+  #extract seas_yr
+  syr <- d$seas_yr[1]
+  
+    #move data
+    if(grepl("winter", syr)){
+    md1 <- d %>% filter(cid == p_ids[1, k]) %>% 
+      select(c(speed, elev, slope, perc_treecov, snowdepth))
+    
+    md2 <- d %>% filter(cid == p_ids[2, k]) %>% 
+      select(c(speed, elev, slope, perc_treecov, snowdepth))
+    }else{
+    md1 <- d %>% filter(cid == p_ids[1, k]) %>% 
+      select(c(speed, elev, slope, perc_treecov))     
+    
+    md2 <- d %>% filter(cid == p_ids[2, k]) %>% 
+      select(c(speed, elev, slope, perc_treecov))    
+    }
+    
+    #resource data
+    rd1 <- d %>% filter(cid == p_ids[1, k]) %>% 
+      select(c(long, lat, IRGVals, NDVIVals))
+    
+    rd2 <- d %>% filter(cid == p_ids[2, k]) %>% 
+      select(c(long, lat, IRGVals, NDVIVals))
+    
+    #estimate bandwidth for each move and resource dataste
+    b_md1 <- estimate_bandwidth(md1)
+    b_md2 <- estimate_bandwidth(md2)
+    b_rd1 <- estimate_bandwidth(rd1)
+    b_rd2 <- estimate_bandwidth(rd2)
+ 
+    #calculate hypervolumes for each move and resource dataset
+    m_hv1 <- hypervolume_gaussian(md1, name = paste(p_ids[1, k], syr, sep = "_"), 
+                                  kde.bandwidth = b_md1, 
+                                  quantile.requested = 0.9)
+    
+    m_hv2 <- hypervolume_gaussian(md2, name = paste(p_ids[2, k], syr, sep = "_"), 
+                                  kde.bandwidth = b_md2, 
+                                  quantile.requested = 0.9)
+    
+    r_hv1 <- hypervolume_gaussian(rd1, name = paste(p_ids[1, k], syr, sep = "_"), 
+                                  kde.bandwidth = b_rd1, 
+                                  quantile.requested = 0.9)
+    
+    r_hv2 <- hypervolume_gaussian(rd2, name = paste(p_ids[2, k], syr, sep = "_"), 
+                                  kde.bandwidth = b_rd2, 
+                                  quantile.requested = 0.9)
+    
+  #extract volumes of each hypervolume
+  mv1 <- get_volume(m_hv1)
+  mv2 <- get_volume(m_hv2)
+  rv1 <- get_volume(r_hv1)
+  rv2 <- get_volume(r_hv2)
+  
+  #calculate hypervolume overlap for move dataset
+  m_ol <- hypervolume_set(m_hv1, m_hv2, check.memory = F)
+  m_ol_12 <- m_ol@HVList$Intersection@Volume / get_volume(m_hv1)
+  m_ol_21 <- m_ol@HVList$Intersection@Volume / get_volume(m_hv2)
+  
+  #calculate hypervolume overlap for resource dataset
+  r_ol <- hypervolume_set(r_hv1, r_hv2, check.memory = F)
+  r_ol_12 <- r_ol@HVList$Intersection@Volume / get_volume(r_hv1)
+  r_ol_21 <- r_ol@HVList$Intersection@Volume / get_volume(r_hv2)
+  
+  #extract id_yr_seas
+  id1 <- paste(p_ids[1, k], syr, sep = "_")
+  id2 <- paste(p_ids[2, k], syr, sep = "_")
+  
+  df <- data.frame(id_yr_seas1 = c(id1, id2), 
+                   id_yr_seas2 = c(id2, id1),
+                   mov_vol1 = c(mv1, mv2),
+                   mov_vol2 = c(mv2, mv1),
+                   res_vol1 = c(rv1, rv2),
+                   res_vol2 = c(rv2, rv1),
+                   move_ol = c(m_ol_12, m_ol_21),
+                   res_ol = c(r_ol_12, r_ol_21))
+
+  row.names(df) <- NULL
+  
+  #return overlap data
+  return(df)
+  
+  }))
+
+ol_list[[j]] <- phen_ol
+}
+
+stopCluster(clust) #end parallelization
+
+#combine list elements
+ol_comb <- do.call(bind_rows, ol_list)
+
+#export hypervolume overlap data
+saveRDS(ol_comb, "./Code Output/phenotype_hypervolume_overlap_all_5.1.2023.rds")
+```
+
+
+#extra code
+
+```{r}
+b <- phen_pt %>% filter(species == "bison" & yr == 2019 & season == "summer")
+e <- phen_pt %>% filter(species == "elk" & yr == 2019 & season == "summer")
 
 b_id <- unique(b$id_yr_seas)
 e_id <- unique(e$id_yr_seas)
 
-ol_df_bison <- data.frame(cid1 = NA, cid2 = NA, year = NA, season = NA, move_ol = NA,
-                    resource_ol = NA)
-for(i in 1:length(b_id)){
-  b_dat <- b %>% filter(id_yr_seas == b_id[i])
-  year <- as.numeric(b_dat$yr[1])
-  seas <- b_dat$season[1]
-  
-  e_dat <- e %>%
-    mutate(yr = as.numeric(yr)) %>% 
-    filter(yr == year & season == seas)
-  
-  etr <- unique(e_dat$id_yr_seas)
-  
-  for(j in 1:length())
-}
+b <- b %>% filter(id_yr_seas %in% b_id[1:10])
+e <- e %>% filter(id_yr_seas %in% e_id[1:15])
 
+b_id <- unique(b$id_yr_seas)
+e_id <- unique(e$id_yr_seas)
 
-
-#hypervolume list, bison
+#hypervolume lists
 move_hv_bison <- list()
 res_hv_bison <- list()
+move_hv_elk <- list()
+res_hv_elk <- list()
 
+
+ ##setup cluster to run on multiple cores
+  #set number of cores to use (1 less than you have)
+no_cores <- detectCores()-1
+# Setup cluster
+clust <- makeCluster(no_cores) 
+# export the objects you need for your calculations from your environment to each node's environment
+clusterExport(clust, varlist=c("b_id", "b", "move_hv_bison", "res_hv_bison",
+                               "e_id", "e", "move_hv_elk", "res_hv_elk"))
+
+#bison loop
 for(i in 1:length(b_id)){
+  print(paste0("bison i: ", i))
   b_dat <- b %>% filter(id_yr_seas == b_id[i])
-  move_hv
-  bw <- estimate_bandwidth(b_dat)
-b}
+  
+  #move hypervolume
+  if(b_dat$season[1] == "winter"){
+  move_dat <- b_dat %>% select(c(speed, elev, slope, perc_treecov, snowdepth))
+  }else{
+    move_dat <- b_dat %>% select(c(speed, elev, slope, perc_treecov))
+  }
+  
+  bwm <- estimate_bandwidth(move_dat)
+  move_hv_bison[[i]] <- hypervolume_gaussian(move_dat, name = b_id[i], kde.bandwidth = bwm, 
+                                 quantile.requested = 0.9)
+  
+  #resource hypervolume
+  res_dat <- b_dat %>% select(c(long, lat, IRGVals, NDVIVals))
+  bwr <- estimate_bandwidth(res_dat)
+  res_hv_bison[[i]] <- hypervolume_gaussian(res_dat, name = b_id[i], kde.bandwidth = bwr, 
+                                 quantile.requested = 0.9)
+  
+}
+
+#elk loop
+for(i in 1:length(e_id)){
+  print(paste0("elk i: ", i))
+  e_dat <- e %>% filter(id_yr_seas == e_id[i])
+  
+  #move hypervolume
+  if(e_dat$season[1] == "winter"){
+  move_dat <- e_dat %>% select(c(speed, elev, slope, perc_treecov, snowdepth))
+  }else{
+    move_dat <- e_dat %>% select(c(speed, elev, slope, perc_treecov))
+  }
+  
+  bwm <- estimate_bandwidth(move_dat)
+  move_hv_elk[[i]] <- hypervolume_gaussian(move_dat, name = e_id[i], kde.bandwidth = bwm, 
+                                 quantile.requested = 0.9)
+  
+  #resource hypervolume
+  res_dat <- e_dat %>% select(c(long, lat, IRGVals, NDVIVals))
+  bwr <- estimate_bandwidth(res_dat)
+  res_hv_elk[[i]] <- hypervolume_gaussian(res_dat, name = e_id[i], kde.bandwidth = bwr, 
+                                 quantile.requested = 0.9)
+  
+}
+
+ stopCluster(clust)
 ```
+
+```{r}
+#move phenotype hypervolume overlap between bison and elk (pairwise)
+#setup just in time compiler
+enableJIT(3)
+ ##setup cluster to run on multiple cores
+  #set number of cores to use (1 less than you have)
+no_cores <- detectCores()-1
+# Setup cluster
+clust <- makeCluster(no_cores) 
+# export the objects you need for your calculations from your environment to each node's environment
+clusterExport(clust, varlist=c( "move_hv_bison", "res_hv_bison",
+                                "move_hv_elk", "res_hv_elk"))
+  
+#movement phenotype overlap
+df_move <- data.frame(id_yr_seas1 = "NA", id_yr_seas2 = "NA",
+                   move_ol = NA)
+
+for(i in 1:length(move_hv_bison)){
+  print(paste0("move i: ", i))
+  b_hv_m <- move_hv_bison[[i]]
+  
+  for(k in 1:length(move_hv_elk)){
+  
+  print(paste0("move k: ", k))
+  ol <- hypervolume_set(b_hv_m, move_hv_elk[[k]], check.memory = F)
+  ol_12 <- ol@HVList$Intersection@Volume / get_volume(b_hv_m)
+  ol_21 <- ol@HVList$Intersection@Volume / get_volume(move_hv_elk[[k]])
+  id_yr_seas1 <- c(b_hv_m@Name, move_hv_elk[[k]]@Name)
+  id_yr_seas2 <- c(move_hv_elk[[k]]@Name, b_hv_m@Name)
+  
+  df <- data.frame(id_yr_seas1 = id_yr_seas1, id_yr_seas2 = id_yr_seas2,
+                   move_ol = c(ol_12, ol_21))
+
+  df_move <- bind_rows(df, df_move)
+  
+  }
+  
+}
+ 
+
+#resource phenotype overlap
+df_res <- data.frame(id_yr_seas1 = "NA", id_yr_seas2 = "NA",
+                   res_ol = NA)
+
+for(i in 1:length(res_hv_bison)){
+  print(paste0("res i: ", i))
+  b_hv_r <- res_hv_bison[[i]]
+  
+  for(k in 1:length(res_hv_elk)){
+  
+  print(paste0("res k: ", k))
+  ol <- hypervolume_set(b_hv_r, res_hv_elk[[k]], check.memory = F)
+  ol_12 <- ol@HVList$Intersection@Volume / get_volume(b_hv_r)
+  ol_21 <- ol@HVList$Intersection@Volume / get_volume(res_hv_elk[[k]])
+  id_yr_seas1 <- c(b_hv_r@Name, res_hv_elk[[k]]@Name)
+  id_yr_seas2 <- c(res_hv_elk[[k]]@Name, b_hv_r@Name)
+  
+  df <- data.frame(id_yr_seas1 = id_yr_seas1, id_yr_seas2 = id_yr_seas2,
+                   res_ol = c(ol_12, ol_21))
+
+  df_res <- bind_rows(df, df_res)
+  
+  }
+  
+}
+stopCluster(clust)
+
+#combine move phenotype and resource overlap to one data frame
+bison_elk_ol <- left_join(df_res, df_move, by = c("id_yr_seas1", "id_yr_seas2")) %>% 
+  filter(id_yr_seas1 != "NA")
+```
+
+```{r}
+#subset example dataset for Jared S. meeting
+ol_ex <- bison_elk_ol %>% filter(id_yr_seas1 %in% c("BI070_2019_summer", "BI084_2019_summer", "EL1807_2019_summer",
+                                                    "EL1902_2019_summer", "EL1628_2019_summer") &
+                                   id_yr_seas2 %in% c("BI070_2019_summer", "BI084_2019_summer", "EL1807_2019_summer",
+                                                    "EL1902_2019_summer", "EL1628_2019_summer")) %>% 
+  arrange(id_yr_seas1, id_yr_seas2) %>% 
+  rowwise() %>% 
+  mutate(id1 = str_split(id_yr_seas1, "_")[[1]][1],
+         id2 = str_split(id_yr_seas2, "_")[[1]][1],
+         year = str_split(id_yr_seas1, "_")[[1]][2],
+         season = str_split(id_yr_seas1, "_")[[1]][3]) %>% 
+  ungroup() %>% 
+   mutate(species1 = if_else(grepl("BI", id1), "bison",
+                if_else(grepl("BH", id1), "bighorn",
+                if_else(grepl("MD", id1), "deer",
+                if_else(grepl("EL", id1), "elk",
+                if_else(grepl("PR", id1), "pronghorn", "NA")))))) %>%
+  mutate(species2 = if_else(grepl("BI", id2), "bison",
+                if_else(grepl("BH", id2), "bighorn",
+                if_else(grepl("MD", id2), "deer",
+                if_else(grepl("EL", id2), "elk",
+                if_else(grepl("PR", id2), "pronghorn", "NA")))))) %>% 
+  select(-c(id_yr_seas1, id_yr_seas2)) %>% 
+  relocate(where(is.numeric), .after = last_col())
+  
+  
+  
+  write.table(ol_ex,"./Code Output/move_res_ol_bison_elk_Jared_example_table.txt", row.names=FALSE)
+```
+
+```{r}
+#plot bison-elk overlap
+bison_elk_ol <- bison_elk_ol %>% arrange(id_yr_seas1, id_yr_seas2) %>% 
+  rowwise() %>% 
+  mutate(id1 = str_split(id_yr_seas1, "_")[[1]][1],
+         id2 = str_split(id_yr_seas2, "_")[[1]][1],
+         year = str_split(id_yr_seas1, "_")[[1]][2],
+         season = str_split(id_yr_seas1, "_")[[1]][3]) %>% 
+  ungroup() %>% 
+   mutate(species1 = if_else(grepl("BI", id1), "bison",
+                if_else(grepl("BH", id1), "bighorn",
+                if_else(grepl("MD", id1), "deer",
+                if_else(grepl("EL", id1), "elk",
+                if_else(grepl("PR", id1), "pronghorn", "NA")))))) %>%
+  mutate(species2 = if_else(grepl("BI", id2), "bison",
+                if_else(grepl("BH", id2), "bighorn",
+                if_else(grepl("MD", id2), "deer",
+                if_else(grepl("EL", id2), "elk",
+                if_else(grepl("PR", id2), "pronghorn", "NA")))))) %>% 
+  select(-c(id_yr_seas1, id_yr_seas2)) %>% 
+  relocate(where(is.numeric), .after = last_col())
+
+
+ggplot(data = bison_elk_ol) +
+  geom_point(aes(x = move_ol, y = res_ol, color = id1)) +
+  smooth
+  facet_wrap(~species1)
+```
+
+
+```{r}
+#example movement and res phenotype tables
+mv <- phen_pt %>% filter(id_yr_seas == "BI070_2019_summer") %>% select(c(cid, species, date, yr, season, speed, elev, slope, perc_treecov)) %>% 
+  mutate(across(c("speed", "elev", "slope", "perc_treecov"), ~ round(.x, digits =3)))
+
+mv <- mv[1:10,]
+
+write.table(mv, "./Code Output/movephen_Jared_exampletable.txt", row.names = F, sep = ",")
+
+res <- phen_pt %>% filter(id_yr_seas == "BI070_2019_summer") %>% select(c(cid, species, date, yr, season, long, lat, NDVIVals, IRGVals)) %>% 
+  mutate(across(c(NDVIVals, IRGVals, long, lat), ~round(.x, digits = 3)))
+
+res <- res[1:10,]
+
+write.table(res, "./Code Output/resphen_Jared_exampletable.txt", row.names = F, sep = ",")
+```
+
+
+
+
+```{r}
+bm <- phen_pt %>% filter(id_yr_seas == "BI070_2019_summer") %>% select(c(speed, elev, slope, perc_treecov))
+em <- phen_pt %>% filter(id_yr_seas == "EL1628_2019_summer") %>% select(c(speed, elev, slope, perc_treecov))
+
+bwr <- estimate_bandwidth(bm)
+  bm_hv <- hypervolume_gaussian(bm, name = "BI070_2019_summer", kde.bandwidth = bwr, 
+                                 quantile.requested = 0.9)
+  
+  ewr <- estimate_bandwidth(em)
+  em_hv <- hypervolume_gaussian(em, name = "EL1628_2019_summer", kde.bandwidth = ewr, 
+                                 quantile.requested = 0.9)
+
+plot(hypervolume_join(bm_hv, em_hv), colors = c("red","blue"), 
+     show.random = T, show.centroid = FALSE)
+
+hv_s  <- hypervolume_set(bm_hv, em_hv, check.memory = F)
+
+plot(hypervolume_join(bm_hv, em_hv, hv_s[["Intersection"]]), colors = c("red","blue", "purple"), 
+     show.random = T, show.centroid = FALSE)
+
+frac_ol12 <- hv_s@HVList$Intersection@Volume / get_volume(bm_hv)
+frac_ol21 <- hv_s@HVList$Intersection@Volume / get_volume(em_hv)
+```
+
+```{r}
+bm <- phen_pt %>% filter(id_yr_seas == "BI070_2019_summer") %>% select(c(long, lat, IRGVals, NDVIVals))
+em <- phen_pt %>% filter(id_yr_seas == "EL1628_2019_summer") %>% select(c(long, lat, IRGVals, NDVIVals))
+
+bwr <- estimate_bandwidth(bm)
+  bm_hv <- hypervolume_gaussian(bm, name = "BI070_2019_summer", kde.bandwidth = bwr, 
+                                 quantile.requested = 0.9)
+  
+  ewr <- estimate_bandwidth(em)
+  em_hv <- hypervolume_gaussian(em, name = "EL1628_2019_summer", kde.bandwidth = ewr, 
+                                 quantile.requested = 0.9)
+
+plot(hypervolume_join(bm_hv, em_hv), colors = c("red","blue"), 
+     show.random = T, show.centroid = FALSE)
+
+hv_s  <- hypervolume_set(bm_hv, em_hv, check.memory = F)
+
+plot(hypervolume_join(bm_hv, em_hv, hv_s[["Intersection"]]), colors = c("red","blue", "purple"), 
+     show.random = T, show.centroid = FALSE)
+
+frac_ol12 <- hv_s@HVList$Intersection@Volume / get_volume(bm_hv)
+frac_ol21 <- hv_s@HVList$Intersection@Volume / get_volume(em_hv)
+```
+
+
 
 
 
